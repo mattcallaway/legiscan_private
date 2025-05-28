@@ -1,0 +1,5 @@
+{
+  "repo_dir": "%USERPROFILE%/Documents/legiscan_storage",  
+  "data_dir": "%USERPROFILE%/Documents/legiscan_storage/data",
+  "api_key": "LEGISCANAPI"
+}

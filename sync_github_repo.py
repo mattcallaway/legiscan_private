@@ -1,29 +1,73 @@
+# sync_github_repo.py
 
 import os
 import subprocess
-import platform
+import logging
+from config import REPO_DIR
 
-REPO_URL = "https://github.com/mattcallaway/legiscan_storage.git"
-REPO_NAME = "legiscan_storage"
-DEFAULT_PATHS = {
-    "Windows": os.path.join(os.environ.get("USERPROFILE", ""), "Documents"),
-    "Linux": os.path.expanduser("~/Documents"),
-    "Darwin": os.path.expanduser("~/Documents")
-}
-BASE_DIR = DEFAULT_PATHS.get(platform.system(), os.getcwd())
-REPO_DIR = os.path.join(BASE_DIR, REPO_NAME)
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 def ensure_repo():
-    if not os.path.exists(REPO_DIR):
-        print(f"Cloning {REPO_NAME} into {BASE_DIR}...")
-        subprocess.run(["git", "clone", REPO_URL], cwd=BASE_DIR)
-    return REPO_DIR
+    """
+    Ensure that REPO_DIR exists and is a git repo, then pull latest changes.
+    """
+    # Create the directory if it doesn't exist
+    os.makedirs(REPO_DIR, exist_ok=True)
+
+    # Verify it is a git repository
+    git_dir = os.path.join(REPO_DIR, ".git")
+    if not os.path.isdir(git_dir):
+        raise RuntimeError(
+            f"{REPO_DIR} is not a valid git repository (no .git folder). "
+            "Please clone the repo manually into this location or add 'git_url' to config.json and enable auto-clone."
+        )
+
+    # Pull any upstream changes
+    try:
+        logger.info(f"Pulling latest changes in {REPO_DIR}")
+        subprocess.check_call(["git", "pull"], cwd=REPO_DIR)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Git pull failed: {e}")
+        raise
+
 
 def sync_with_remote():
+    """
+    Commit & push any local changes back to your remote.
+    Only commits when there is something staged.
+    """
     try:
-        subprocess.run(["git", "pull"], cwd=REPO_DIR, check=True)
-        subprocess.run(["git", "add", "."], cwd=REPO_DIR, check=True)
-        subprocess.run(["git", "commit", "-am", "Auto update"], cwd=REPO_DIR, check=False)
-        subprocess.run(["git", "push"], cwd=REPO_DIR, check=True)
+        # Stage all changes
+        subprocess.check_call(["git", "add", "--all"], cwd=REPO_DIR)
+
+        # Check if there is anything to commit
+        res = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=REPO_DIR
+        )
+        if res.returncode == 0:
+            logger.info("No changes to commit.")
+            return
+
+        # Commit & push
+        subprocess.check_call(
+            ["git", "commit", "-m", "Automated sync by LegiScan tooling"],
+            cwd=REPO_DIR
+        )
+        subprocess.check_call(["git", "push"], cwd=REPO_DIR)
+        logger.info("Changes committed and pushed successfully.")
     except subprocess.CalledProcessError as e:
-        print(f"Git sync failed: {e}")
+        logger.error(f"Failed to sync to remote: {e}")
+        # Optional: re-raise if you want to fail hard
+        # raise
+
+
+if __name__ == "__main__":
+    try:
+        ensure_repo()
+        sync_with_remote()
+        print("✅ Repository is up‐to‐date and in sync.")
+    except Exception as e:
+        logger.error(f"sync_github_repo encountered an error: {e}")
+        raise

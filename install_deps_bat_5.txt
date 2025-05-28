@@ -1,0 +1,59 @@
+@echo off
+REM =====================================================================
+REM  LegiScan Dashboard Installer and Runner
+REM  This script will:
+REM    1. Install Python dependencies
+REM    2. Clone (or update) the LegiScan repo
+REM    3. Ensure data directories exist
+REM    4. Launch the Streamlit dashboard
+REM =====================================================================
+
+\:: --- 1) Check for Python ---
+where python >nul 2>&1
+if %errorlevel% neq 0 (
+echo ERROR: Python is not installed or not in PATH.\&echo Please install Python 3.8+ and retry.\&pause
+exit /b 1
+)
+
+\:: --- 2) Install dependencies ---
+echo Installing Python packages from requirements.txt...
+pip install --upgrade pip
+pip install -r "%\~dp0requirements.txt"
+if %errorlevel% neq 0 (
+echo Failed to install dependencies.\&pause
+exit /b 1
+)
+
+\:: --- 3) Clone or update the GitHub repo ---
+set REPO\_DIR=%USERPROFILE%\Documents\legiscan\_storage
+set GIT\_URL=https://github.com/mattcallaway/legiscan_private.git  REM <-- Set your GitHub repo URL here
+
+if exist "%REPO\_DIR%.git" (
+echo Repository exists, pulling latest changes...
+pushd "%REPO\_DIR%"
+git pull
+popd
+) else (
+echo Cloning repository into %REPO\_DIR%...
+git clone %GIT\_URL% "%REPO\_DIR%"
+if %errorlevel% neq 0 (
+echo Git clone failed. Check GIT\_URL and your network.\&pause
+exit /b 1
+)
+)
+
+\:: --- 4) Ensure DATA\_DIR exists ---
+\:: DATA\_DIR is configured in config.json; default is "%USERPROFILE%\Documents\legiscan\_storage/data"
+set DATA\_DIR=%REPO\_DIR%\data
+if not exist "%DATA\_DIR%" (
+echo Creating data directory %DATA\_DIR%...
+mkdir "%DATA\_DIR%"
+)
+
+\:: --- 5) Launch Streamlit dashboard ---
+echo Launching Streamlit dashboard...
+pushd "%REPO\_DIR%"
+start "" streamlit run legiscan\_git\_sync\_update\_8\_7.py
+popd
+
+echo Done. The dashboard should open in your browser shortly.\&pause
