@@ -336,6 +336,67 @@ filtered_df = df.copy()
 st.sidebar.title("SCCA Bill Tracker")
 st.sidebar.header("Controls")
 
+# NEW: State and Federal Legislation Selectors
+st.sidebar.subheader("🏛️ Jurisdiction Filters")
+
+# Jurisdiction Level Selector
+jurisdiction_levels = st.sidebar.multiselect(
+    "Jurisdiction Level",
+    options=["Federal", "State", "Unknown"],
+    default=["Federal", "State", "Unknown"],
+    help="Filter by federal vs state legislation"
+)
+
+# State Selector (only show if State is selected in jurisdiction levels)
+selected_states = []
+if "State" in jurisdiction_levels:
+    # Get available states from data
+    available_states = []
+    if not df.empty and 'jurisdiction_name' in df.columns:
+        state_bills = df[df['jurisdiction_level'] == 'State']
+        available_states = sorted(state_bills['jurisdiction_name'].dropna().unique())
+    
+    if not available_states:
+        available_states = list(US_STATES.values())
+        
+    selected_states = st.sidebar.multiselect(
+        "🗺️ Select States",
+        options=available_states,
+        default=available_states if not df.empty else [],
+        help="Select specific states to include"
+    )
+
+# Federal Legislature Selector (only show if Federal is selected)
+selected_federal_types = []
+if "Federal" in jurisdiction_levels:
+    # Get available federal types from data
+    available_federal = []
+    if not df.empty and 'jurisdiction_name' in df.columns:
+        federal_bills = df[df['jurisdiction_level'] == 'Federal']
+        available_federal = sorted(federal_bills['jurisdiction_name'].dropna().unique())
+    
+    # If no specific federal data, use default options
+    if not available_federal:
+        available_federal = list(FEDERAL_TYPES.values())
+    
+    selected_federal_types = st.sidebar.multiselect(
+        "🏛️ Federal Legislature",
+        options=available_federal,
+        default=available_federal if not df.empty else [],
+        help="Select House, Senate, or both"
+    )
+
+# Show current jurisdiction summary
+with st.sidebar.expander("📊 Current Jurisdiction Summary"):
+    if not df.empty and 'jurisdiction_level' in df.columns:
+        summary = df['jurisdiction_level'].value_counts()
+        for level, count in summary.items():
+            st.write(f"• {level}: {count} bills")
+    else:
+        st.write("No jurisdiction data available")
+
+st.sidebar.divider()
+
 # ←– RESCAN BUTTON
 if st.sidebar.button("🔄 Rescan"):
     if not selected_states and not selected_federal_types:
@@ -343,7 +404,14 @@ if st.sidebar.button("🔄 Rescan"):
     else:
         with st.spinner("Rescanning bills…"):
             try:
-                stats = run_scan(states=selected_states + selected_federal_types, data_dir=DATA_DIR)
+                # Map jurisdiction names to API codes
+                STATE_NAME_TO_CODE = {v: k for k, v in US_STATES.items()}
+                api_states = [STATE_NAME_TO_CODE.get(s, s) for s in selected_states]
+                if selected_federal_types:
+                    api_states.append("US")
+                api_states = list(set(api_states))
+                
+                stats = run_scan(states=api_states, data_dir=DATA_DIR)
                 sync_with_remote()
                 st.session_state.scan_stats = stats
                 if hasattr(st, 'rerun'):
@@ -404,61 +472,6 @@ st.sidebar.title("🔍 Filter Options")
 # Add option to show all tracked bills regardless of other filters
 show_all_tracked = st.sidebar.checkbox("Show All Tracked Bills (ignore filters)", value=False)
 
-# NEW: State and Federal Legislation Selectors
-st.sidebar.subheader("🏛️ Jurisdiction Filters")
-
-# Jurisdiction Level Selector
-jurisdiction_levels = st.sidebar.multiselect(
-    "Jurisdiction Level",
-    options=["Federal", "State", "Unknown"],
-    default=["Federal", "State", "Unknown"],
-    help="Filter by federal vs state legislation"
-)
-
-# State Selector (only show if State is selected in jurisdiction levels)
-selected_states = []
-if "State" in jurisdiction_levels:
-    # Get available states from data
-    available_states = []
-    if not df.empty and 'jurisdiction_name' in df.columns:
-        state_bills = df[df['jurisdiction_level'] == 'State']
-        available_states = sorted(state_bills['jurisdiction_name'].dropna().unique())
-    
-    selected_states = st.sidebar.multiselect(
-        "🗺️ Select States",
-        options=available_states,
-        default=available_states,
-        help="Select specific states to include"
-    )
-
-# Federal Legislature Selector (only show if Federal is selected)
-selected_federal_types = []
-if "Federal" in jurisdiction_levels:
-    # Get available federal types from data
-    available_federal = []
-    if not df.empty and 'jurisdiction_name' in df.columns:
-        federal_bills = df[df['jurisdiction_level'] == 'Federal']
-        available_federal = sorted(federal_bills['jurisdiction_name'].dropna().unique())
-    
-    # If no specific federal data, use default options
-    if not available_federal:
-        available_federal = list(FEDERAL_TYPES.values())
-    
-    selected_federal_types = st.sidebar.multiselect(
-        "🏛️ Federal Legislature",
-        options=available_federal,
-        default=available_federal,
-        help="Select House, Senate, or both"
-    )
-
-# Show current jurisdiction summary
-with st.sidebar.expander("📊 Current Jurisdiction Summary"):
-    if not df.empty and 'jurisdiction_level' in df.columns:
-        summary = df['jurisdiction_level'].value_counts()
-        for level, count in summary.items():
-            st.write(f"• {level}: {count} bills")
-    else:
-        st.write("No jurisdiction data available")
 
 # Rest of existing filters
 if not df.empty:
