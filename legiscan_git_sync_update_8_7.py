@@ -251,10 +251,16 @@ def save_notes(notes):
 
 def search_bills(df, search_term):
     """Search bills by title, sponsor, description, or bill number"""
-    if not search_term:
+    if not search_term or df.empty:
         return df
     
     search_term = search_term.lower()
+    
+    # Safe fallback if columns are missing
+    for col in ['title', 'sponsors', 'description', 'bill_number', 'committees']:
+        if col not in df.columns:
+            df[col] = ''
+            
     mask = (
         df['title'].str.lower().str.contains(search_term, na=False) |
         df['sponsors'].str.lower().str.contains(search_term, na=False) |
@@ -413,6 +419,7 @@ if st.sidebar.button("🔄 Rescan"):
                 
                 stats = run_scan(states=api_states, data_dir=DATA_DIR)
                 sync_with_remote()
+                load_data.clear()
                 st.session_state.scan_stats = stats
                 if hasattr(st, 'rerun'):
                     st.rerun()
