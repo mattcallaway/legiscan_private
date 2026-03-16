@@ -443,12 +443,10 @@ if "scan_stats" in st.session_state:
         else:
             st.experimental_rerun()
 
-# If there’s no data yet, prompt to scan
+# Main content
 if df.empty:
     st.warning("No data found. Please run a rescan to populate.")
-    st.stop()
-    
-# Main content
+
 st.title("🏛️ SCCA Bill Tracker")
 
 # Dashboard Summary
@@ -474,10 +472,11 @@ show_all_tracked = st.sidebar.checkbox("Show All Tracked Bills (ignore filters)"
 
 
 # Rest of existing filters
-if not df.empty:
-    keywords = st.sidebar.multiselect("Keyword Category", 
-                                     sorted(df["keyword"].dropna().unique()) if "keyword" in df.columns else [],
-                                     default=sorted(df["keyword"].dropna().unique()) if "keyword" in df.columns else [])
+keywords = st.sidebar.multiselect(
+    "Keyword Category", 
+    sorted(df["keyword"].dropna().unique()) if not df.empty and "keyword" in df.columns else keywords_list,
+    default=sorted(df["keyword"].dropna().unique()) if not df.empty and "keyword" in df.columns else []
+)
     
 
 # Initialize session state only once
