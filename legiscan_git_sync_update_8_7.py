@@ -479,9 +479,22 @@ keywords = st.sidebar.multiselect(
 )
     
 
+# UI: Add New Keyword
+with st.sidebar.expander("➕ Add Custom Keyword Category"):
+    new_keyword = st.text_input("New Keyword")
+    if st.button("Add Keyword"):
+        if new_keyword and new_keyword not in keywords_list:
+            keywords_list.append(new_keyword)
+            if save_keywords(keywords_list):
+                st.success(f"Added new keyword: {new_keyword}")
+                if hasattr(st, 'rerun'):
+                    st.rerun()
+                else:
+                    st.experimental_rerun()
+
 # Initialize session state only once
 if "status_options" not in st.session_state:
-    all_status_stages_raw = sorted(df["status_stage"].dropna().astype(str).unique())
+    all_status_stages_raw = sorted(df["status_stage"].dropna().astype(str).unique()) if not df.empty and "status_stage" in df.columns else []
     st.session_state.status_options = all_status_stages_raw
     regenerate_friendly_status_options()
 
@@ -549,35 +562,34 @@ if st.sidebar.button("Reset Status Filters", key="reset_status_filters"):
     st.session_state.status_options = [str(s) for s in all_status_stages_raw]
     st.rerun()
 
-    
-    # These need to be at the same indentation level as the other filters above
-    sponsors = st.sidebar.multiselect("Sponsors", 
-                                     sorted(df["sponsors"].dropna().unique()) if "sponsors" in df.columns else [])
-    committees = st.sidebar.multiselect("Committees", 
-                                       sorted(df["committees"].dropna().unique()) if "committees" in df.columns else [])
-    position_filter = st.sidebar.multiselect("Position", ["Support", "Oppose", "Watch"])
-    priority_filter = st.sidebar.multiselect("Priority", ["High", "Medium", "Low"])
-    date_range = st.sidebar.date_input("Introduced Date Range", [])
+# These need to be at the same indentation level as the other filters above
+sponsors = st.sidebar.multiselect("Sponsors", 
+                                 sorted(df["sponsors"].dropna().unique()) if "sponsors" in df.columns else [])
+committees = st.sidebar.multiselect("Committees", 
+                                   sorted(df["committees"].dropna().unique()) if "committees" in df.columns else [])
+position_filter = st.sidebar.multiselect("Position", ["Support", "Oppose", "Watch"])
+priority_filter = st.sidebar.multiselect("Priority", ["High", "Medium", "Low"])
+date_range = st.sidebar.date_input("Introduced Date Range", [])
 
-    # Apply filters (but not to tracked bills if show_all_tracked is enabled)
-    filtered_df = df.copy()
+# Apply filters (but not to tracked bills if show_all_tracked is enabled)
+filtered_df = df.copy()
+
+if not show_all_tracked:
+    # Apply jurisdiction filters
+    if jurisdiction_levels and 'jurisdiction_level' in df.columns:
+        filtered_df = filtered_df[filtered_df["jurisdiction_level"].isin(jurisdiction_levels)]
     
-    if not show_all_tracked:
-        # Apply jurisdiction filters
-        if jurisdiction_levels and 'jurisdiction_level' in df.columns:
-            filtered_df = filtered_df[filtered_df["jurisdiction_level"].isin(jurisdiction_levels)]
-        
-        # Apply state-specific filters
-        if "State" in jurisdiction_levels and selected_states and 'jurisdiction_name' in df.columns:
-            state_mask = (filtered_df['jurisdiction_level'] == 'State') & (filtered_df['jurisdiction_name'].isin(selected_states))
-            non_state_mask = filtered_df['jurisdiction_level'] != 'State'
-            filtered_df = filtered_df[state_mask | non_state_mask]
-        
-        # Apply federal-specific filters
-        if "Federal" in jurisdiction_levels and selected_federal_types and 'jurisdiction_name' in df.columns:
-            federal_mask = (filtered_df['jurisdiction_level'] == 'Federal') & (filtered_df['jurisdiction_name'].isin(selected_federal_types))
-            non_federal_mask = filtered_df['jurisdiction_level'] != 'Federal'
-            filtered_df = filtered_df[federal_mask | non_federal_mask]
+    # Apply state-specific filters
+    if "State" in jurisdiction_levels and selected_states and 'jurisdiction_name' in df.columns:
+        state_mask = (filtered_df['jurisdiction_level'] == 'State') & (filtered_df['jurisdiction_name'].isin(selected_states))
+        non_state_mask = filtered_df['jurisdiction_level'] != 'State'
+        filtered_df = filtered_df[state_mask | non_state_mask]
+    
+    # Apply federal-specific filters
+    if "Federal" in jurisdiction_levels and selected_federal_types and 'jurisdiction_name' in df.columns:
+        federal_mask = (filtered_df['jurisdiction_level'] == 'Federal') & (filtered_df['jurisdiction_name'].isin(selected_federal_types))
+        non_federal_mask = filtered_df['jurisdiction_level'] != 'Federal'
+        filtered_df = filtered_df[federal_mask | non_federal_mask]
         
         # Apply other existing filters
         if keywords and "keyword" in df.columns:
