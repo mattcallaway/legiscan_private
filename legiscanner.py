@@ -53,7 +53,8 @@ logger = logging.getLogger(__name__)
 
 def load_keywords(filepath=KEYWORDS_FILE):
     if not os.path.exists(filepath):
-        raise FileNotFoundError(f"Keywords file not found: {filepath}")
+        logger.warning(f"Keywords file not found at {filepath}, using defaults.")
+        return ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
 
