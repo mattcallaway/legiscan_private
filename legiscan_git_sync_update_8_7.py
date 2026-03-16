@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 from config               import DATA_DIR
 from sync_github_repo     import ensure_repo, sync_with_remote
-from legi_scan_scanner    import run_scan, CSV_FILE, KEYWORDS_FILE
+from legiscanner          import run_scan, CSV_FILE, KEYWORDS_FILE
 
 ensure_repo()   # still make sure the repo is pulled
 
@@ -343,13 +343,37 @@ if st.sidebar.button("🔄 Rescan"):
     else:
         with st.spinner("Rescanning bills…"):
             try:
-                run_scan(states=selected_states + selected_federal_types, data_dir=DATA_DIR)
+                stats = run_scan(states=selected_states + selected_federal_types, data_dir=DATA_DIR)
                 sync_with_remote()
-                st.sidebar.success("Rescan complete!")
-                st.experimental_rerun()
+                st.session_state.scan_stats = stats
+                if hasattr(st, 'rerun'):
+                    st.rerun()
+                else:
+                    st.experimental_rerun()
             except Exception as e:
                 st.sidebar.error(f"Rescan failed: {e}")
                 logger.error(f"Error during rescan: {e}")
+
+if "scan_stats" in st.session_state:
+    stats = st.session_state.scan_stats
+    st.sidebar.markdown("### Last Scan Stats")
+    if stats.get("api_status") == "error":
+        st.sidebar.error("API error encountered during scan")
+    else:
+        st.sidebar.success("API connection successful")
+    
+    st.sidebar.info(
+        f"**Total Found:** {stats.get('total_found', 0)}\n\n"
+        f"**Filtered:** {stats.get('filtered', 0)}\n\n"
+        f"**New Bills:** {stats.get('new_bills', 0)}\n\n"
+        f"**Updated Status:** {stats.get('changed_status', 0)}"
+    )
+    if st.sidebar.button("Dismiss Stats"):
+        del st.session_state.scan_stats
+        if hasattr(st, 'rerun'):
+            st.rerun()
+        else:
+            st.experimental_rerun()
 
 # If there’s no data yet, prompt to scan
 if df.empty:

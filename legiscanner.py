@@ -80,17 +80,20 @@ def fetch_search_results(jurisdiction, keyword):
         data = r.json()
     except Exception as e:
         logger.error(f"Error fetching search results for {jurisdiction}/{keyword}: {e}")
-        return []
+        return [], 0, 0, False
 
     if data.get('status') != 'OK':
         logger.warning(f"SearchRaw status not OK ({jurisdiction}): {data.get('status')}")
-        return []
+        return [], 0, 0, False
 
     results = data.get('searchresult', {}).get('results', [])
-    return [
+    total_found = len(results)
+    filtered_results = [
         {'bill_id': r['bill_id'], 'change_hash': r['change_hash'], 'relevance': r.get('relevance', 0)}
         for r in results if r.get('relevance', 0) >= RELEVANCE_THRESHOLD
     ]
+    filtered_count = total_found - len(filtered_results)
+    return filtered_results, total_found, filtered_count, True
 
 
 def get_bill_details(bill_id):
@@ -130,9 +133,10 @@ def flatten_bill(details, jurisdiction, keyword):
         'status_date': details.get('status_date', ''),
         'status_stage': details.get('status', ''),
         'url': details.get('url', ''),
-        'committee': details.get('committee', {}).get('name', ''),
-        'keyword': keyword,
+        'keyword': keyword, 
     }
+    committee_info = details.get('committee')
+    row['committee'] = committee_info.get('name', '') if isinstance(committee_info, dict) else ''
     # Sponsors
     sponsors = details.get('sponsors', [])
     row['sponsor_names'] = ", ".join(s.get('name', '') for s in sponsors)
@@ -165,6 +169,18 @@ def flatten_bill(details, jurisdiction, keyword):
     return row
 
 
+def load_existing_csv(filepath=CSV_FILE):
+    existing_bills = {}
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    existing_bills[str(row.get('bill_id', ''))] = row
+        except Exception as e:
+            logger.error(f"Error reading existing CSV: {e}")
+    return existing_bills
+
 def run_scan(states=None, data_dir=None):
     # Default to ALL if none
     if not states:
@@ -177,11 +193,25 @@ def run_scan(states=None, data_dir=None):
 
     keywords = load_keywords()
     cache    = load_cache()
-    export_rows = []
+    existing_bills = load_existing_csv(CSV_FILE)
+    
+    stats = {
+        "api_status": "ok",
+        "total_found": 0,
+        "filtered": 0,
+        "new_bills": 0,
+        "changed_status": 0
+    }
 
     for jurisdiction in states:
         for keyword in keywords:
-            searches = fetch_search_results(jurisdiction, keyword)
+            searches, total_f, filtered_c, api_ok = fetch_search_results(jurisdiction, keyword)
+            if not api_ok:
+                stats["api_status"] = "error"
+            
+            stats["total_found"] += total_f
+            stats["filtered"] += filtered_c
+
             time.sleep(0.2)
             for item in searches:
                 bid      = str(item['bill_id'])
@@ -192,32 +222,45 @@ def run_scan(states=None, data_dir=None):
                     if not details:
                         continue
                     row = flatten_bill(details, jurisdiction, keyword)
-                    export_rows.append(row)
+                    
+                    if bid not in existing_bills:
+                        stats["new_bills"] += 1
+                    else:
+                        stats["changed_status"] += 1
+                        
+                    existing_bills[bid] = row
                     cache[bid] = {'change_hash': new_hash, 'last_checked': datetime.now().isoformat()}
                     time.sleep(0.2)
 
     # Write CSV
-    if export_rows:
+    if existing_bills:
         fieldnames = [
             'jurisdiction_level','jurisdiction_name','bill_id','session','bill_number',
             'title','description','status_date','status_stage','url','committee',
             'keyword','sponsor_names','sponsors','committees','referrals','history',
             'last_action','last_action_date','subjects'
         ]
+        # Ensure all existing rows have exactly these fieldnames (missing ones as empty string)
+        clean_bills = []
+        for bill in existing_bills.values():
+            clean_row = {k: bill.get(k, '') for k in fieldnames}
+            clean_bills.append(clean_row)
+            
         with open(CSV_FILE, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(export_rows)
-        logger.info(f"Wrote {len(export_rows)} rows to {CSV_FILE}")
+            writer.writerows(clean_bills)
+        logger.info(f"Wrote {len(existing_bills)} rows to {CSV_FILE}")
     else:
-        logger.info("No new or updated bills to write.")
+        logger.info("No bills to write.")
 
     save_cache(cache)
+    return stats
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run LegiScan comprehensive tracker")
     parser.add_argument('--states', nargs='+', help='Jurisdictions to scan (e.g., CA NY TX US ALL)')
     args = parser.parse_args()
-    run_scan(states=[s.upper() for s in (args.states or [])])
-    print("Scan complete.")
+    stats = run_scan(states=[s.upper() for s in (args.states or [])])
+    print(f"Scan complete. Stats: {json.dumps(stats, indent=2)}")

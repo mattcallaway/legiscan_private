@@ -25,7 +25,27 @@ if os.path.exists(CACHE_FILE):
 else:
     cache = {}
 
-export_rows = []
+def load_existing_csv():
+    existing_bills = {}
+    if os.path.exists(CSV_FILE):
+        try:
+            with open(CSV_FILE, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    existing_bills[str(row.get('bill_id', ''))] = row
+        except Exception as e:
+            pass
+    return existing_bills
+
+export_rows = load_existing_csv()
+
+stats = {
+    "api_status": "ok",
+    "total_found": 0,
+    "filtered": 0,
+    "new_bills": 0,
+    "changed_status": 0
+}
 
 def log(message):
     print(f"[{datetime.now().isoformat()}] {message}")
@@ -46,17 +66,18 @@ def fetch_bills_by_keyword(keyword):
         response = requests.get(url)
         log(f"Status code: {response.status_code}")
         if response.status_code != 200:
-            return []
-
+            stats["api_status"] = "error"
+            return
         data = response.json()
         if data.get("status") != "OK":
-            return []
-
+            stats["api_status"] = "error"
+            return
         results = data.get("searchresult", {}).get("results", [])
-        output = []
+        stats["total_found"] += len(results)
 
         for v in results:
             if v.get("relevance", 0) < RELEVANCE_THRESHOLD:
+                stats["filtered"] += 1
                 continue
 
             bill_id = v["bill_id"]
@@ -114,7 +135,7 @@ def fetch_bills_by_keyword(keyword):
                         for a in bill_data.get("amendments", [])
                     ])
 
-                    output.append({
+                    row_data = {
                         "keyword": keyword,
                         "bill_id": bill_id,
                         "bill_number": bill_data.get("bill_number", ""),
@@ -135,15 +156,21 @@ def fetch_bills_by_keyword(keyword):
                         "votes": votes,
                         "calendar": calendar,
                         "amendments": amendments
-                    })
+                    }
+                    
+                    if str(bill_id) not in export_rows:
+                        stats["new_bills"] += 1
+                    else:
+                        stats["changed_status"] += 1
+                        
+                    export_rows[str(bill_id)] = row_data
 
                     cache[str(bill_id)] = {
                         "change_hash": change_hash,
                         "last_checked": datetime.now().isoformat()
                     }
 
-        log(f"{len(output)} bills processed for keyword '{keyword}'")
-        return output
+        log(f"Processed keyword '{keyword}'")
 
     except Exception as e:
         log(f"Exception: {e}")
@@ -151,21 +178,22 @@ def fetch_bills_by_keyword(keyword):
 
 keywords = load_keywords()
 for keyword in keywords:
-    export_rows.extend(fetch_bills_by_keyword(keyword))
+    fetch_bills_by_keyword(keyword)
 
 with open(CSV_FILE, mode='w', newline='', encoding='utf-8') as file:
-    writer = csv.DictWriter(file, fieldnames=[
+    fieldnames = [
         "keyword", "bill_id", "bill_number", "title", "description", "url",
         "status", "last_action", "last_action_date", "sponsors", "committees",
         "status_stage", "introduced_date", "committee_date",
         "passed_assembly_date", "passed_senate_date", "governor_action_date",
         "votes", "calendar", "amendments"
-    ])
+    ]
+    writer = csv.DictWriter(file, fieldnames=fieldnames)
     writer.writeheader()
-    for row in export_rows:
+    for row in export_rows.values():
         writer.writerow({key: row.get(key, "") for key in writer.fieldnames})
 
 with open(CACHE_FILE, 'w') as cache_file:
     json.dump(cache, cache_file, indent=2)
 
-log(f"Done. {len(export_rows)} total rows written to {CSV_FILE}")
+log(f"Done. {len(export_rows)} total rows written to {CSV_FILE}. Stats: {json.dumps(stats)}")
