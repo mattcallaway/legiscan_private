@@ -16,7 +16,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 from config               import DATA_DIR, API_KEY
-from sync_github_repo     import ensure_repo, sync_with_remote
+from sync_github_repo     import ensure_repo, sync_with_remote as _sync_with_remote
+import threading
+def sync_with_remote():
+    """Run github sync asynchronously."""
+    threading.Thread(target=_sync_with_remote, daemon=True).start()
+
 from legiscanner          import run_scan, CSV_FILE, KEYWORDS_FILE
 
 # ── Corpus manager (Layer A — master bill corpus) ─────────────────────────────
@@ -27,7 +32,10 @@ try:
 except ImportError:
     _CORPUS_AVAILABLE = False
 
-ensure_repo()   # pull latest from remote on startup
+if "repo_sync_done" not in st.session_state:
+    st.session_state.repo_sync_done = True
+    try: ensure_repo()
+    except: pass
 
 DATA_FILE    = CSV_FILE
 TRACKED_FILE = os.path.join(DATA_DIR, "tracked_bills.json")
