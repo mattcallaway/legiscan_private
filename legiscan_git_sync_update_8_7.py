@@ -1160,11 +1160,7 @@ elif "Legislator Directory" in app_mode:
         except:
             leg_df = pd.DataFrame()
             
-        if leg_df.empty:
-            st.info("No legislators ingested yet.")
-            st.caption("Expand the '⚙️ Admin & Database Tools' menu and use the '👔 Staff Intelligence' section to Sync Live Data from Google.")
-            
-        elif st.session_state.get('active_profile'):
+        if st.session_state.get('active_profile'):
             aptr = st.session_state.active_profile
             
             def clear_prof():
@@ -1175,12 +1171,22 @@ elif "Legislator Directory" in app_mode:
             st.divider()
             
             # Find the best match
-            match = leg_df[
-                leg_df['name'].str.contains(aptr, case=False, na=False) |
-                leg_df['normalized_name'].str.contains(aptr, case=False, na=False)
-            ]
+            match = pd.DataFrame()
+            if not leg_df.empty:
+                match = leg_df[
+                    leg_df['name'].str.contains(aptr, case=False, na=False) |
+                    leg_df['normalized_name'].str.contains(aptr, case=False, na=False)
+                ]
+                
             if match.empty:
-                st.error(f"Cannot locate Staff Intelligence profile for: {aptr}")
+                st.info(f"Using Master Corpus profile for: {aptr}")
+                st.caption("No custom Staff Intelligence mapping found. Fetching bills from master index.")
+                l_id = None
+                l_name = aptr
+                l_party = "?"
+                l_dist = "?"
+                l_cham = "Legislator"
+                l_norm = aptr
             else:
                 lrow = match.iloc[0]
                 l_id = lrow.get('legislator_id')
@@ -1190,23 +1196,33 @@ elif "Legislator Directory" in app_mode:
                 l_cham = lrow.get('chamber', '')
                 l_norm = lrow.get('normalized_name', '')
                 
-                st.subheader(f"{l_cham} {l_name} ({l_party}) — District {l_dist}")
-                t_staff, t_issue, t_bills = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills"])
-                
-                with t_staff:
+            st.subheader(f"{l_cham} {l_name} ({l_party}) — District {l_dist}")
+            t_staff, t_issue, t_bills = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills"])
+            
+            with t_staff:
+                if l_id:
                     staff_ls = staff_manager.get_legislator_staff(l_id)
                     if staff_ls: st.table(pd.DataFrame(staff_ls)[['role', 'name', 'email', 'office_type']])
                     else: st.caption("No staff loaded.")
-                with t_issue:
+                else: 
+                    st.caption("No staff logic active for unmapped corpus legislators.")
+            with t_issue:
+                if l_id:
                     iss_ls = staff_manager.get_legislator_issues(l_id)
                     if iss_ls: st.table(pd.DataFrame(iss_ls))
                     else: st.caption("No issues mapped.")
-                with t_bills:
-                    if not df.empty and l_norm and 'sponsors' in df.columns:
-                        s_bills = df[df['sponsors'].astype(str).str.lower().str.contains(str(l_norm).lower(), case=False, na=False)]
-                        if s_bills.empty: st.caption("No indexed bills found.")
-                        else: st.dataframe(s_bills[['bill_number', 'status_stage', 'title']], hide_index=True)
+                else:
+                    st.caption("No issue assignments mapped for unmapped corpus legislators.")
+            with t_bills:
+                if not df.empty and l_norm and 'sponsors' in df.columns:
+                    s_bills = df[df['sponsors'].astype(str).str.lower().str.contains(str(l_norm).lower(), case=False, na=False)]
+                    if s_bills.empty: st.caption("No indexed bills found.")
+                    else: st.dataframe(s_bills[['bill_number', 'status_stage', 'title']], hide_index=True)
                         
+        elif leg_df.empty:
+            st.info("No legislators ingested yet.")
+            st.caption("Expand the '⚙️ Admin & Database Tools' menu and use the '👔 Staff Intelligence' section to Sync Live Data from Google.")
+            
         else: # Standard Directory View
             lf_c1, lf_c2 = st.columns(2)
             with lf_c1:
