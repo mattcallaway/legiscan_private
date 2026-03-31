@@ -68,15 +68,55 @@ CREATE TABLE IF NOT EXISTS unmatched_staff_rows (
 """
 
 def normalize_leg_name(name: str) -> str:
-    """Normalize legislator names for matching."""
+    """Normalize legislator names for robust tracking."""
     if pd.isna(name) or not name:
         return ""
     name_str = str(name).strip()
-    # Strip titles
-    for title in ["Sen.", "Senator ", "Asm.", "Assemblymember ", "Assembly Member ", "Dr. "]:
-        if name_str.startswith(title):
-            name_str = name_str[len(title):].strip()
+    
+    # Aggressively strip titles
+    titles_to_strip = [
+        "Sen.", "Senator", "Asm.", "Assemblymember", "Assembly Member", 
+        "Assemblywoman", "Assemblyman", "Dr.", "Hon.", "Representative", "Rep."
+    ]
+    # Use regex to strip boundaries
+    pattern = r"^(?:" + "|".join([re.escape(t) for t in titles_to_strip]) + r")\b\s*"
+    name_str = re.sub(pattern, "", name_str, flags=re.IGNORECASE).strip()
+    
+    # Remove everything in parentheses (like "D-LA")
+    name_str = re.sub(r'\(.*?\)', '', name_str).strip()
+    
+    # Remove trailing punctuation
+    name_str = re.sub(r'[,.]+$', '', name_str).strip()
+    
     return name_str.lower()
+
+def exact_or_partial_match(query_name: str, leg_cache: dict) -> str:
+    """
+    Given a query like "Villapudua" and a cache {"carlos villapudua": leg_id},
+    find the best match. 
+    leg_cache dict structure: leg_cache[normalized_name] = leg_id
+    Returns matching leg_id or empty string.
+    """
+    query = normalize_leg_name(query_name)
+    if not query:
+        return ""
+        
+    # 1. Exact match
+    if query in leg_cache:
+        return leg_cache[query]
+        
+    # 2. Last name / partial contains match
+    # Example: query "Aghazarian" in "Greg Aghazarian"
+    for norm_name, l_id in leg_cache.items():
+        if query in norm_name.split() or norm_name in query.split():
+            return l_id
+            
+    # 3. Fuzzy partial substring (risky but catches "Villapudua, Carlos")
+    for norm_name, l_id in leg_cache.items():
+        if query in norm_name or norm_name in query:
+            return l_id
+            
+    return ""
 
 def safe_split_names(names_str: str) -> List[str]:
     """Split staff names on `and`, `/`, `+`."""
@@ -225,7 +265,7 @@ class StaffManager:
                 continue
                 
             norm_name = normalize_leg_name(member)
-            leg_id = leg_cache.get(norm_name)
+            leg_id = exact_or_partial_match(member, leg_cache)
             if not leg_id:
                 stats["unmatched"] += 1
                 conn.execute("INSERT INTO unmatched_staff_rows (raw_row_data, reason_unmatched) VALUES (?, ?)", 
@@ -309,6 +349,18 @@ class StaffManager:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM staff_import_jobs ORDER BY timestamp DESC LIMIT 1").fetchone()
             return dict(row) if row else None
+            
+    def get_job_history(self, limit: int = 10) -> list:
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM staff_import_jobs ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(r) for r in rows]
+            
+    def get_unmatched_rows(self, limit: int = 100) -> list:
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM unmatched_staff_rows ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(r) for r in rows]
 
     # --- Query API ---
     
@@ -333,3 +385,26 @@ class StaffManager:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM committee_staff WHERE committee_name LIKE ?", (f"%{cmte_name}%",)).fetchall()
             return [dict(r) for r in rows]
+            
+    def get_legislator_committee_matrix(self, leg_norm_name: str) -> list:
+        """Finds committees where this legislator is Chair or Vice Chair, and returns the consultant staff for those committees."""
+        if not leg_norm_name:
+            return []
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            # Step 1: Find committees this legislator leads
+            cmtes = conn.execute(
+                "SELECT DISTINCT committee_name FROM committee_staff WHERE role IN ('chair', 'vice_chair') AND LOWER(staff_name) LIKE ?", 
+                (f"%{leg_norm_name}%",)
+            ).fetchall()
+            
+            res = []
+            for c in cmtes:
+                c_name = c['committee_name']
+                staff = conn.execute("SELECT role, staff_name FROM committee_staff WHERE committee_name = ? AND role NOT IN ('chair', 'vice_chair')", (c_name,)).fetchall()
+                if staff:
+                    for s in staff:
+                        res.append({"committee": c_name, "role": s['role'].replace("_", " ").title(), "staff_name": s['staff_name']})
+                else:
+                    res.append({"committee": c_name, "role": "No Consultants Mapped", "staff_name": "—"})
+            return res

@@ -446,7 +446,7 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
             st.write(f"**Committee(s):** {committees}")
             
             # --- Legislative Linking ---
-            st.markdown("**Sponsor(s):** " + sponsors)
+            st.caption("**Sponsors & Coauthors**")
             if sponsors != '—' and sponsors.strip():
                 _sp_list = [s.strip() for s in sponsors.split(',') if s.strip()]
                 if _sp_list:
@@ -456,7 +456,7 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                             def jump_prof(sp=clean_sp):
                                 st.session_state.app_mode = "👔 Legislator Directory"
                                 st.session_state.active_profile = sp
-                            st.button(f"👔 {clean_sp[:20]}", key=f"lnk_{key_prefix}_{idx}", help=f"View {clean_sp} Profile", on_click=jump_prof)
+                            st.button(f"{clean_sp[:25]}", key=f"lnk_{key_prefix}_{idx}", help=f"View {clean_sp} Profile", on_click=jump_prof, type="tertiary", use_container_width=True)
             if kw_tags:
                 badges = ' '.join([f'`{t}`' for t in kw_tags])
                 st.write(f"**Keyword Tags:** {badges}")
@@ -616,7 +616,7 @@ st.session_state.global_search = global_search
 
 app_mode = st.sidebar.radio(
     "View Mode",
-    ["🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "👔 Legislator Directory"],
+    ["🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "👔 Legislator Directory", "🛠️ Staff Analytics"],
     key="app_mode"
 )
 
@@ -1149,6 +1149,14 @@ elif "Tracked Bills" in app_mode:
                 save_tracked(tracked_bills)
                 st.rerun()
 
+# ────────── STAFF PIPELINE DIAGNOSTICS ──────────────────────────────────────────────
+elif "Staff Analytics" in app_mode:
+    if not staff_manager:
+        st.warning("Staff Intelligence Module offline.")
+    else:
+        from staff_diagnostics import render_staff_diagnostics
+        render_staff_diagnostics(staff_manager)
+
 # ────────── LEGISLATOR DIRECTORY ──────────────────────────────────────────────
 elif "Legislator Directory" in app_mode:
     if not staff_manager:
@@ -1197,7 +1205,7 @@ elif "Legislator Directory" in app_mode:
                 l_norm = lrow.get('normalized_name', '')
                 
             st.subheader(f"{l_cham} {l_name} ({l_party}) — District {l_dist}")
-            t_staff, t_issue, t_bills = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills"])
+            t_staff, t_issue, t_bills, t_cmte = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills", "Committee Leadership"])
             
             with t_staff:
                 if l_id:
@@ -1206,6 +1214,13 @@ elif "Legislator Directory" in app_mode:
                     else: st.caption("No staff loaded.")
                 else: 
                     st.caption("No staff logic active for unmapped corpus legislators.")
+            with t_cmte:
+                if l_norm:
+                    cmte_ls = staff_manager.get_legislator_committee_matrix(l_norm)
+                    if cmte_ls: st.table(pd.DataFrame(cmte_ls))
+                    else: st.caption("No primary committee leadership mapped.")
+                else:
+                    st.caption("Cannot resolve committee status.")
             with t_issue:
                 if l_id:
                     iss_ls = staff_manager.get_legislator_issues(l_id)
