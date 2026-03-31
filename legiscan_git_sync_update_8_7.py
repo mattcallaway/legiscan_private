@@ -9,6 +9,7 @@ import sys
 
 from job_manager import JobManager
 from job_runner import run_bootstrap_job, run_refresh_job, run_rescan_job
+from staff_manager import StaffManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -570,6 +571,12 @@ except Exception as e:
     logger.error(f"Failed to load JobManager: {e}")
     job_manager = None
 
+try:
+    staff_manager = StaffManager(os.path.join(DATA_DIR, "staff.db"))
+except Exception as e:
+    logger.error(f"Failed to load StaffManager: {e}")
+    staff_manager = None
+
 corpus = None
 if _CORPUS_AVAILABLE:
     try:
@@ -597,7 +604,7 @@ st.session_state.global_search = global_search
 
 app_mode = st.sidebar.radio(
     "View Mode",
-    ["🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills"],
+    ["🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "👔 Legislator Directory"],
     key="app_mode"
 )
 
@@ -808,6 +815,22 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
     if corpus:
         c_stats = corpus.get_corpus_stats()
         st.write(f"Corpus Size: {c_stats['total_bills']:,} bills")
+    st.divider()
+
+    st.header("👔 Staff Intelligence")
+    st.caption("Upload a structured legislative staff roster.")
+    staff_file = st.file_uploader("Assy & Senate Roster (.xlsx)", type=['xlsx'])
+    if staff_file and staff_manager:
+        if st.button("Ingest Staff Hierarchy", type="primary", use_container_width=True):
+            with st.spinner("Extracting roles and issue domains..."):
+                tmp_path = os.path.join(DATA_DIR, "temp_staff.xlsx")
+                with open(tmp_path, "wb") as f:
+                    f.write(staff_file.getbuffer())
+                success, results = staff_manager.ingest_spreadsheet(tmp_path)
+                if success:
+                    st.success(f"Ingested! Processed: {results['processed']}, Unmatched: {results['unmatched']}")
+                else:
+                    st.error(f"Ingestion failed: {results}")
     st.divider()
 
     st.header("🔄 Keyword Rescan")
@@ -1081,3 +1104,73 @@ elif "Tracked Bills" in app_mode:
                 save_tracked(tracked_bills)
                 st.rerun()
 
+# ────────── LEGISLATOR DIRECTORY ──────────────────────────────────────────────
+elif "Legislator Directory" in app_mode:
+    if not staff_manager:
+        st.warning("Staff Intelligence Module offline.")
+    else:
+        st.header("👔 Legislator Staff & Issue Directory")
+        try:
+            leg_df = staff_manager.get_all_legislators()
+        except:
+            leg_df = pd.DataFrame()
+            
+        if leg_df.empty:
+            st.info("No legislators ingested yet. Upload an active (.xlsx) Assembly/Senate Roster inside the Admin controls sidebar.")
+        else:
+            # Filter bar
+            lf_c1, lf_c2 = st.columns(2)
+            with lf_c1:
+                search_leg = st.text_input("🔍 Search member name, party...", "")
+            with lf_c2:
+                cham_opt = ["All"] + list(leg_df['chamber'].dropna().unique())
+                search_cham = st.selectbox("Chamber", cham_opt)
+                
+            if search_cham != "All":
+                leg_df = leg_df[leg_df['chamber'] == search_cham]
+            if search_leg:
+                leg_df = leg_df[
+                    leg_df['name'].str.contains(search_leg, case=False, na=False) |
+                    leg_df['party'].str.contains(search_leg, case=False, na=False)
+                ]
+                
+            st.caption(f"Showing {len(leg_df)} active members.")
+            for _, lrow in leg_df.iterrows():
+                l_id = lrow.get('legislator_id')
+                l_name = lrow.get('name', 'Unknown')
+                l_party = lrow.get('party', '')
+                l_dist = lrow.get('district', '')
+                l_cham = lrow.get('chamber', '')
+                l_norm = lrow.get('normalized_name', '')
+                
+                exp_title = f"{l_cham} {l_name} ({l_party}) — Di. {l_dist}"
+                with st.expander(exp_title):
+                    st.subheader(f"Contact & Profile")
+                    t_staff, t_issue, t_bills = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills"])
+                    with t_staff:
+                        st.caption("Active Roster")
+                        staff_ls = staff_manager.get_legislator_staff(l_id)
+                        if staff_ls:
+                            st.table(pd.DataFrame(staff_ls)[['role', 'name', 'email', 'office_type']])
+                        else:
+                            st.caption("No staff loaded.")
+                    with t_issue:
+                        st.caption("Portfolio Areas")
+                        iss_ls = staff_manager.get_legislator_issues(l_id)
+                        if iss_ls:
+                            st.table(pd.DataFrame(iss_ls))
+                        else:
+                            st.caption("No issues mapped.")
+                    with t_bills:
+                        if df.empty:
+                            st.caption("No bill cache loaded.")
+                        else:
+                            if l_norm and 'sponsors' in df.columns:
+                                s_bills = df[df['sponsors'].astype(str).str.lower().str.contains(str(l_norm).lower(), case=False, na=False)]
+                                if s_bills.empty:
+                                    st.caption(f"No indexed bills found matching: {l_name}")
+                                else:
+                                    st.write(f"Found {len(s_bills)} bills:")
+                                    st.dataframe(s_bills[['bill_number', 'status_stage', 'title']], hide_index=True)
+                            else:
+                                st.caption("Cannot match sponsors to corpus.")
