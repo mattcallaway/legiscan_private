@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import json
 from datetime import datetime
+import time
 import logging
 import importlib
 import sys
@@ -157,6 +158,7 @@ def load_data():
         return pd.DataFrame()
 
 
+@st.cache_data
 def load_keywords():
     try:
         if os.path.exists(KEYWORDS_FILE):
@@ -176,6 +178,7 @@ def save_keywords(keywords):
             json.dump(sorted(set(keywords)), f)
         os.replace(tmp_file, KEYWORDS_FILE)
         sync_with_remote()
+        load_keywords.clear()
         return True
     except Exception as e:
         logger.error(f"Error saving keywords: {e}")
@@ -183,6 +186,7 @@ def save_keywords(keywords):
         return False
 
 
+@st.cache_data
 def load_saved_views():
     try:
         if os.path.exists(VIEWS_FILE):
@@ -201,12 +205,14 @@ def save_saved_views(views):
             json.dump(views, f, indent=2)
         os.replace(tmp_file, VIEWS_FILE)
         sync_with_remote()
+        load_saved_views.clear()
         return True
     except Exception as e:
         logger.error(f"Error saving views: {e}")
         st.error(f"Error saving views: {e}")
         return False
 
+@st.cache_data
 def load_tracked():
     try:
         if os.path.exists(TRACKED_FILE):
@@ -226,6 +232,7 @@ def save_tracked(tracked):
             json.dump(tracked, f)
         os.replace(tmp_file, TRACKED_FILE)
         sync_with_remote()
+        load_tracked.clear()
         return True
     except Exception as e:
         logger.error(f"Error saving tracked bills: {e}")
@@ -233,6 +240,7 @@ def save_tracked(tracked):
         return False
 
 
+@st.cache_data
 def load_notes():
     try:
         if os.path.exists(NOTES_FILE):
@@ -252,6 +260,7 @@ def save_notes(notes):
             json.dump(notes, f, indent=2)
         os.replace(tmp_file, NOTES_FILE)
         sync_with_remote()
+        load_notes.clear()
         return True
     except Exception as e:
         logger.error(f"Error saving notes: {e}")
@@ -619,27 +628,31 @@ except Exception as e:
     st.stop()
 
 # ── Initialize CorpusManager ──────────────────────────────────────────────────
-# Legacy compatibility: corpus is None when corpus_manager.py is absent or DB fails.
-try:
-    job_manager = JobManager(os.path.join(DATA_DIR, "jobs.db"))
-except Exception as e:
-    logger.error(f"Failed to load JobManager: {e}")
-    job_manager = None
+@st.cache_resource
+def get_job_manager():
+    try: return JobManager(os.path.join(DATA_DIR, "jobs.db"))
+    except Exception as e:
+        logger.error(f"Failed to load JobManager: {e}")
+        return None
 
-try:
-    staff_manager = StaffManager(os.path.join(DATA_DIR, "staff.db"))
-except Exception as e:
-    logger.error(f"Failed to load StaffManager: {e}")
-    staff_manager = None
+@st.cache_resource
+def get_staff_manager():
+    try: return StaffManager(os.path.join(DATA_DIR, "staff.db"))
+    except Exception as e:
+        logger.error(f"Failed to load StaffManager: {e}")
+        return None
 
-corpus = None
-if _CORPUS_AVAILABLE:
-    try:
-        corpus = _CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
+@st.cache_resource
+def get_corpus_manager():
+    if not _CORPUS_AVAILABLE: return None
+    try: return _CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
     except Exception as _ce:
         logger.warning(f"CorpusManager init failed (non-fatal): {_ce}")
+        return None
 
-
+job_manager = get_job_manager()
+staff_manager = get_staff_manager()
+corpus = get_corpus_manager()
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -867,6 +880,8 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
         running_jobs = job_manager.get_running_jobs()
         if running_jobs:
             st.warning(f"⚠️ {len(running_jobs)} job(s) currently running!")
+            
+    st.write(f"⏱️ **Last Render Time:** {st.session_state.get('last_render_ms', 0):.0f} ms")
     if corpus:
         c_stats = corpus.get_corpus_stats()
         st.write(f"Corpus Size: {c_stats['total_bills']:,} bills")
@@ -1104,10 +1119,21 @@ if "All Bills" in app_mode:
         db_df = apply_sort(db_df, st.session_state.global_sort)
         run_smart_header(len(db_df), "All Bills", corpus, tracked_bills)
         
-        st.caption(f"Showing {len(db_df)} bills from Master Archive")
-        for _, row in db_df.iterrows():
-            bid = str(row.get('bill_id', 'Unknown'))
-            _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"ab_{bid}")
+        total_bills = len(db_df)
+        st.caption(f"Showing {total_bills} bills from Master Archive")
+        if total_bills > 0:
+            page_size = 50
+            total_pages = max(1, (total_bills + page_size - 1) // page_size)
+            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1, key="all_bills_pg")
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            page_df = db_df.iloc[start_idx:end_idx]
+            if total_pages > 1: st.write(f"Page {page} of {total_pages} (Bills {start_idx+1}-{min(end_idx, total_bills)})")
+            
+            for _, row in page_df.iterrows():
+                bid = str(row.get('bill_id', 'Unknown'))
+                _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"ab_{bid}")
+            
         if not db_df.empty:
             st.download_button("📥 Export", build_export_df(db_df, bill_notes, tracked_bills).to_csv(index=False), "all_bills_search.csv", "text/csv")
 
@@ -1130,10 +1156,21 @@ elif "Keyword Matches" in app_mode:
         kw_df = apply_sort(kw_df, st.session_state.global_sort)
         run_smart_header(len(kw_df), "Keyword Matches", corpus, tracked_bills)
         
-        st.caption(f"Showing {len(kw_df)} matches from the Rescan Cache")
-        for _, row in kw_df.iterrows():
-            bid = str(row.get('bill_id', 'Unknown'))
-            _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"kw_{bid}")
+        total_bills = len(kw_df)
+        st.caption(f"Showing {total_bills} matches from the Rescan Cache")
+        if total_bills > 0:
+            page_size = 50
+            total_pages = max(1, (total_bills + page_size - 1) // page_size)
+            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1, key="kw_bills_pg")
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            page_df = kw_df.iloc[start_idx:end_idx]
+            if total_pages > 1: st.write(f"Page {page} of {total_pages} (Bills {start_idx+1}-{min(end_idx, total_bills)})")
+            
+            for _, row in page_df.iterrows():
+                bid = str(row.get('bill_id', 'Unknown'))
+                _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"kw_{bid}")
+                
         if not kw_df.empty:
             st.download_button("📥 Export Matches", build_export_df(kw_df, bill_notes, tracked_bills).to_csv(index=False), "match_search.csv", "text/csv")
 
@@ -1198,10 +1235,20 @@ elif "Tracked Bills" in app_mode:
         tr_df = apply_sort(tr_df, st.session_state.global_sort)
         run_smart_header(len(tr_df), "Tracked Bills", corpus, tracked_bills)
         
-        st.caption(f"Showing {len(tr_df)} Tracked Bills")
-        for _, row in tr_df.iterrows():
-            bid = str(row.get('bill_id', 'Unknown'))
-            _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"tr_{bid}")
+        total_bills = len(tr_df)
+        st.caption(f"Showing {total_bills} Tracked Bills")
+        if total_bills > 0:
+            page_size = 50
+            total_pages = max(1, (total_bills + page_size - 1) // page_size)
+            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1, key="tr_bills_pg")
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            page_df = tr_df.iloc[start_idx:end_idx]
+            if total_pages > 1: st.write(f"Page {page} of {total_pages} (Bills {start_idx+1}-{min(end_idx, total_bills)})")
+            
+            for _, row in page_df.iterrows():
+                bid = str(row.get('bill_id', 'Unknown'))
+                _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"tr_{bid}")
             
         st.divider()
         if not tr_df.empty:
