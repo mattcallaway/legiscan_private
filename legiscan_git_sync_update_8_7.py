@@ -568,6 +568,34 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                     st.caption(f"Last reviewed: {_lr_dt}")
                 except: pass
 
+        with st.expander("🗳️ Roll Call Votes"):
+            global corpus
+            if corpus:
+                try:
+                    rcs = corpus.get_roll_calls_for_bill(int(bill_id))
+                    if not rcs:
+                        st.info("No recorded roll-call votes available for this bill.")
+                    else:
+                        for rc in rcs:
+                            passed_str = "✅ Passed" if rc.get('passed') else "❌ Failed"
+                            st.markdown(f"**{rc.get('date')}** — {rc.get('chamber', 'Chamber')} / {rc.get('desc')} ({passed_str})")
+                            st.caption(f"Yea: {rc.get('yea', 0)} | Nay: {rc.get('nay', 0)} | NV: {rc.get('nv', 0)} | Absent: {rc.get('absent', 0)}")
+                            m_votes = rc.get('member_votes', [])
+                            if m_votes:
+                                with st.expander("View Individual Votes"):
+                                    # Create small columns for a grid of votes
+                                    cols = st.columns(3)
+                                    for v_idx, mv in enumerate(m_votes):
+                                        v_txt = mv.get('vote_text', 'Unknown')
+                                        p_name = mv.get('name', f"ID {mv.get('people_id')}")
+                                        color = "green" if v_txt == "Yea" else ("red" if v_txt == "Nay" else "gray")
+                                        cols[v_idx % 3].markdown(f"*{p_name}*: <span style='color:{color}; font-weight:bold;'>{v_txt}</span>", unsafe_allow_html=True)
+                            st.divider()
+                except Exception as e:
+                    st.error(f"Error loading votes: {e}")
+            else:
+                st.info("Roll-call database is offline.")
+
     return note
 
 
@@ -834,6 +862,15 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
     if corpus:
         c_stats = corpus.get_corpus_stats()
         st.write(f"Corpus Size: {c_stats['total_bills']:,} bills")
+        try:
+            m_stats = corpus.get_people_mapping_stats()
+            st.write(f"**LegiScan Person Matches:** {m_stats['matched']} matched / {m_stats['unmatched']} unmatched (Total: {m_stats['total']})")
+            if st.button("🔄 Auto-Map LegiScan Names to Roster"):
+                if staff_manager:
+                    res = corpus.sync_people_mapping(staff_manager.get_all_legislators())
+                    st.success(f"Matched {res['matched']}, Unmatched {res['unmatched']} out of {res['total']}")
+                    st.rerun()
+        except: pass
     st.divider()
 
     st.header("👔 Staff Intelligence")
@@ -854,6 +891,9 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                 ok, res = staff_manager.sync_live_sheet(prim['url'], DATA_DIR, prim.get('state', 'CA'))
                 if ok:
                     st.session_state.sync_warnings = res.get('warnings', [])
+                    if corpus:
+                        try: corpus.sync_people_mapping(staff_manager.get_all_legislators())
+                        except: pass
                     st.success("Synced gracefully!")
                     st.rerun()
                 else: 
@@ -1222,7 +1262,7 @@ elif "Legislator Directory" in app_mode:
                 l_norm = lrow.get('normalized_name', '')
                 
             st.subheader(f"{l_cham} {l_name} ({l_party}) — District {l_dist}")
-            t_staff, t_issue, t_bills, t_cmte = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills", "Committee Leadership"])
+            t_staff, t_issue, t_bills, t_cmte, t_votes = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills", "Committee Leadership", "✅ Voting History"])
             
             with t_staff:
                 if l_id:
@@ -1250,6 +1290,18 @@ elif "Legislator Directory" in app_mode:
                     s_bills = df[df['sponsors'].astype(str).str.lower().str.contains(str(l_norm).lower(), case=False, na=False)]
                     if s_bills.empty: st.caption("No indexed bills found.")
                     else: st.dataframe(s_bills[['bill_number', 'status_stage', 'title']], hide_index=True)
+            with t_votes:
+                if l_id and corpus:
+                    try:
+                        votes = corpus.get_votes_for_legislator(l_id)
+                        if not votes:
+                            st.info("No recorded voting history found in local dataset.")
+                        else:
+                            st.dataframe(pd.DataFrame(votes)[['vote_date', 'bill_number', 'motion', 'vote_text', 'passed', 'jurisdiction']], hide_index=True)
+                    except Exception as e:
+                        st.error(f"Error fetching voting history: {e}")
+                else:
+                    st.caption("Voting history is unavailable. Ensure staff mapping exists and the rolling dataset includes their votes.")
                         
         elif leg_df.empty:
             st.info("No legislators ingested yet.")
