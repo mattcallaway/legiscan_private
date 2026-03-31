@@ -604,7 +604,7 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                                     cols = st.columns(3)
                                     for v_idx, mv in enumerate(m_votes):
                                         v_txt = mv.get('vote_text', 'Unknown')
-                                        p_name = mv.get('name', f"ID {mv.get('people_id')}")
+                                        p_name = mv.get('name') or f"ID {mv.get('people_id')}"
                                         color = "green" if v_txt == "Yea" else ("red" if v_txt == "Nay" else "gray")
                                         cols[v_idx % 3].markdown(f"*{p_name}*: <span style='color:{color}; font-weight:bold;'>{v_txt}</span>", unsafe_allow_html=True)
                             st.divider()
