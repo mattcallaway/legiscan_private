@@ -1235,5 +1235,4 @@ elif "Legislator Directory" in app_mode:
                     st.session_state.active_profile = n
                     
                 col2.button("View Profile", key=f"dprof_{lrow.get('legislator_id')}", on_click=go_prof, args=(l_name,))
-                
-            st.divider()\n
+            st.divider()
