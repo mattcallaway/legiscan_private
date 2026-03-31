@@ -830,13 +830,14 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
     st.divider()
 
     st.header("👔 Staff Intelligence")
-    try:
-        import json
-        with open(os.path.join(DATA_DIR, "staff_sources.json"), "r") as _sf:
-            _scf = json.load(_sf)
-    except: _scf = {}
-    
-    live_sources = [s for s in _scf.get('staff_sources', []) if s.get('enabled') and s.get('type') == 'google_sheet_live']
+    live_sources = [{
+        "label": "Live Capitol Matrix",
+        "type": "google_sheet_live",
+        "url": "https://docs.google.com/spreadsheets/d/1gFeGy72R_-FSFrjXbKCAAvVsvNjyV7t_TUvFoB12vys/export?format=xlsx",
+        "enabled": True,
+        "state": "CA",
+        "chamber": "Both"
+    }]
     
     if live_sources and staff_manager:
         prim = live_sources[0]
