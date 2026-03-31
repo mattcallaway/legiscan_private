@@ -845,10 +845,15 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
             with st.spinner("Downloading live Google Sheet..."):
                 ok, res = staff_manager.sync_live_sheet(prim['url'], DATA_DIR, prim.get('state', 'CA'))
                 if ok:
+                    st.session_state.sync_warnings = res.get('warnings', [])
                     st.success("Synced gracefully!")
                     st.rerun()
                 else: 
                     st.error(f"Failed: {res}")
+                    
+        if st.session_state.get('sync_warnings'):
+            for w in st.session_state.sync_warnings:
+                st.warning(f"Pipeline Sanity Check: {w}")
                 
         last_job = staff_manager.get_last_import_job()
         if last_job:

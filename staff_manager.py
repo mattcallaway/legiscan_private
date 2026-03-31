@@ -56,7 +56,11 @@ CREATE TABLE IF NOT EXISTS staff_import_jobs (
     rows_processed INTEGER DEFAULT 0,
     rows_skipped INTEGER DEFAULT 0,
     unmatched_records INTEGER DEFAULT 0,
-    errors INTEGER DEFAULT 0
+    errors INTEGER DEFAULT 0,
+    legislators_matched INTEGER DEFAULT 0,
+    staff_created INTEGER DEFAULT 0,
+    issues_created INTEGER DEFAULT 0,
+    committees_created INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS unmatched_staff_rows (
@@ -149,6 +153,12 @@ class StaffManager:
         try:
             with self._get_conn() as conn:
                 conn.executescript(STAFF_SCHEMA)
+                # Ensure backwards schema compatibility for new fields
+                for c in ["legislators_matched", "staff_created", "issues_created", "committees_created"]:
+                    try:
+                        conn.execute(f"ALTER TABLE staff_import_jobs ADD COLUMN {c} INTEGER DEFAULT 0")
+                    except sqlite3.OperationalError:
+                        pass
         except Exception as e:
             logger.error(f"Failed to initialize staff db: {e}")
 
@@ -158,7 +168,9 @@ class StaffManager:
         now = datetime.datetime.utcnow().isoformat()
         
         stats = {
-            "processed": 0, "skipped": 0, "unmatched": 0, "errors": 0
+            "processed": 0, "skipped": 0, "unmatched": 0, "errors": 0,
+            "legislators_matched": 0, "staff_created": 0, "issues_created": 0, "committees_created": 0,
+            "warnings": []
         }
         
         try:
@@ -190,11 +202,15 @@ class StaffManager:
                         df = xl.parse(tab)
                         self._process_committees(df, chamber, tab, conn, stats)
 
+                # Validate before log
+                if stats["staff_created"] == 0:
+                    stats["warnings"].append("Zero office staff records were mapped! Is the Sheet empty/badly formatted?")
+                
                 # Log Job
                 conn.execute("""
-                    INSERT INTO staff_import_jobs (job_id, timestamp, rows_processed, rows_skipped, unmatched_records, errors)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (job_id, now, stats["processed"], stats["skipped"], stats["unmatched"], stats["errors"]))
+                    INSERT INTO staff_import_jobs (job_id, timestamp, rows_processed, rows_skipped, unmatched_records, errors, legislators_matched, staff_created, issues_created, committees_created)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (job_id, now, stats["processed"], stats["skipped"], stats["unmatched"], stats["errors"], stats["legislators_matched"], stats["staff_created"], stats["issues_created"], stats["committees_created"]))
                 conn.commit()
                 
             return True, stats
@@ -234,6 +250,7 @@ class StaffManager:
                 INSERT INTO legislators (legislator_id, name, chamber, state, district, party, normalized_name)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (leg_id, name_val, chamber, state, dist_val, party_val, norm_name))
+            stats["legislators_matched"] += 1
             
             for src_col, target_role, email_col in roles_mapping:
                 if src_col in row and not pd.isna(row[src_col]):
@@ -246,6 +263,7 @@ class StaffManager:
                             INSERT INTO legislator_staff (staff_id, legislator_id, name, role, email, office_type, source_tab)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (staff_id, leg_id, staff_name, target_role, email, "capitol", tab))
+                        stats["staff_created"] += 1
 
     def _process_issues(self, df: pd.DataFrame, chamber: str, tab: str, conn: sqlite3.Connection, stats: dict):
         if 'Member' not in df.columns:
@@ -283,6 +301,7 @@ class StaffManager:
                         INSERT INTO legislator_issue_assignments (id, legislator_id, issue_area, staff_name)
                         VALUES (?, ?, ?, ?)
                     """, (uid, leg_id, str(issue_area).strip(), staff_name))
+                    stats["issues_created"] += 1
 
     def _process_committees(self, df: pd.DataFrame, chamber: str, tab: str, conn: sqlite3.Connection, stats: dict):
         if 'Committee' not in df.columns:
@@ -316,6 +335,7 @@ class StaffManager:
                             INSERT INTO committee_staff (id, committee_name, chamber, role, staff_name)
                             VALUES (?, ?, ?, ?, ?)
                         """, (uid, cmte_name, chamber, role_id, staff_name))
+                        stats["committees_created"] += 1
 
     def sync_live_sheet(self, url: str, temp_dir: str, state="CA"):
         """Downloads a public Google Sheet as an XLSX buffer and ingests it."""
