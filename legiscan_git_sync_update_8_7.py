@@ -841,7 +841,7 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
     )
     _rescan_federal = st.checkbox("Include Federal", value=True, key="rescan_federal")
     
-    _lock_rescan = running_jobs and any(_j['job_type'] == 'keyword_rescan' for _j in running_jobs)
+    _lock_rescan = bool(running_jobs and any(_j['job_type'] == 'keyword_rescan' for _j in running_jobs))
     if st.button("▶️ Run Keyword Rescan", key="run_rescan", disabled=_lock_rescan):
         if not _rescan_states and not _rescan_federal:
             st.warning("Select at least one jurisdiction.")
@@ -877,7 +877,7 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
         _sel_session = _session_opts.get(_sel_label)
         
         st.markdown("**Incremental Refresh** (cheap, periodic)")
-        _lock_refresh = running_jobs and any(_j['job_type'] == 'incremental_refresh' for _j in running_jobs)
+        _lock_refresh = bool(running_jobs and any(_j['job_type'] == 'incremental_refresh' for _j in running_jobs))
         if st.button("🔄 Refresh Session Updates", key="corpus_refresh", disabled=not _sel_session or _lock_refresh):
             _rb = st.progress(0, text="Refreshing...")
             run_refresh_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _rb.progress(min(f, 1.0), text=m))
@@ -885,7 +885,7 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
             st.rerun()
             
         st.markdown("**Bulk Bootstrap** (expensive, initial load)")
-        _lock_boot = running_jobs and any(_j['job_type'] == 'bootstrap_corpus' for _j in running_jobs)
+        _lock_boot = bool(running_jobs and any(_j['job_type'] == 'bootstrap_corpus' for _j in running_jobs))
         _confirm_boot = st.checkbox("I understand Bootstrap takes several minutes", key="confirm_boot")
         if st.button("⬇️ Execute Bootstrap Dump", key="corpus_bootstrap", disabled=not (_sel_session and _confirm_boot) or _lock_boot):
             _pb = st.progress(0, text="Bootstrapping...")
