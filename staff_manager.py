@@ -5,6 +5,8 @@ import uuid
 import datetime
 import logging
 import re
+import requests
+import json
 from typing import List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
@@ -275,11 +277,44 @@ class StaffManager:
                             VALUES (?, ?, ?, ?, ?)
                         """, (uid, cmte_name, chamber, role_id, staff_name))
 
+    def sync_live_sheet(self, url: str, temp_dir: str, state="CA"):
+        """Downloads a public Google Sheet as an XLSX buffer and ingests it."""
+        try:
+            # Transform typical /edit Google URL to /export
+            if "/edit" in url:
+                export_url = url.split("/edit")[0] + "/export?format=xlsx"
+            else:
+                export_url = url
+                
+            resp = requests.get(export_url, timeout=15)
+            resp.raise_for_status()
+            
+            tmp_path = os.path.join(temp_dir, f"temp_staff_{uuid.uuid4().hex[:8]}.xlsx")
+            with open(tmp_path, "wb") as f:
+                f.write(resp.content)
+                
+            success, stats_or_err = self.ingest_spreadsheet(tmp_path, state)
+            
+            # Cleanup temp
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                
+            return success, stats_or_err
+        except Exception as e:
+            logger.error(f"Live sync failed: {e}")
+            return False, str(e)
+            
+    def get_last_import_job(self) -> dict:
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM staff_import_jobs ORDER BY timestamp DESC LIMIT 1").fetchone()
+            return dict(row) if row else None
+
     # --- Query API ---
     
     def get_all_legislators(self) -> pd.DataFrame:
         with self._get_conn() as conn:
-            return pd.read_sql("SELECT * FROM legislators ORDER BY name", conn)
+            return pd.read_sql("SELECT * FROM legislators ORDER BY chamber, name", conn)
             
     def get_legislator_staff(self, leg_id: str) -> list:
         with self._get_conn() as conn:
