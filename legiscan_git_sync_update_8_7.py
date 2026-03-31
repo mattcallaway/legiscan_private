@@ -379,19 +379,45 @@ def build_export_df(source_df: pd.DataFrame, bill_notes: dict, tracked_bills: li
     return export_df[cols]
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
-def create_summary_dashboard(df, tracked_bills, bill_notes, corpus=None):
-    """Top-level metrics bar.  Shows corpus total when available."""
-    col1, col2, col3, col4, col5 = st.columns(5)
-    corpus_stats  = corpus.get_corpus_stats() if corpus else None
-    total_bills   = corpus_stats["total_bills"] if corpus_stats else len(df)
-    total_label   = "Corpus Bills" if corpus_stats else "Keyword Bills"
-    high_priority = sum(1 for b in tracked_bills if bill_notes.get(b, {}).get("priority") == "High")
-    support_count = sum(1 for b in tracked_bills if bill_notes.get(b, {}).get("position") == "Support")
-    with col1: st.metric(total_label, f"{total_bills:,}")
-    with col2: st.metric("Keyword Matches (CSV)", len(df))
-    with col3: st.metric("Tracked Bills", len(tracked_bills))
-    with col4: st.metric("High Priority", high_priority)
-    with col5: st.metric("Support Position", support_count)
+def run_smart_header(df_count, app_mode, corpus, tracked_bills):
+    """Compact, high-value header area showing mode, row counts, and data freshness."""
+    with st.container(border=True):
+        hc1, hc2, hc3, hc4 = st.columns(4)
+        
+        with hc1:
+            st.markdown(f"**Current Mode:** `{app_mode}`")
+            st.caption(f"Showing **{df_count:,}** results")
+
+        with hc2:
+            st.markdown("**Sort Order:**")
+            st.caption(st.session_state.get('global_sort', 'Status Date ⬇️'))
+
+        with hc3:
+            st.markdown("**Data Vintage:**")
+            if corpus:
+                cstats = corpus.get_corpus_stats()
+                if cstats and cstats.get('last_updated'):
+                    lu = cstats['last_updated']
+                    st.caption(f"DB: {lu}")
+                else:
+                    st.caption("DB: Unknown")
+            else:
+                st.caption("Mode: CSV Cache")
+
+        with hc4:
+            st.markdown("**Tracked Scope:**")
+            st.caption(f"{len(tracked_bills)} total tracked")
+            
+    # Add lightweight visual indicator if filters are active
+    active_filters = []
+    if st.session_state.get('global_jur'): active_filters.append(f"Jurisdictions: {len(st.session_state.global_jur)}")
+    if st.session_state.get('global_status'): active_filters.append(f"Statuses: {len(st.session_state.global_status)}")
+    if st.session_state.get('kw_filter'): active_filters.append(f"Keywords: {len(st.session_state.kw_filter)}")
+    if st.session_state.get('tracked_pos'): active_filters.append(f"Positions: {len(st.session_state.tracked_pos)}")
+    if st.session_state.get('global_search'): active_filters.append(f"Search: '{st.session_state.global_search}'")
+    
+    if active_filters:
+        st.info("🔎 **Active Filters:** " + " · ".join(active_filters))
 
 
 # ─── Bill card renderer ───────────────────────────────────────────────────────
@@ -410,11 +436,9 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                       key_prefix: str) -> dict:
     """
     Render a single bill as a rich expandable card.
-    Track / Untrack button is INSIDE the expander.
-    Returns the (possibly updated) note dict.
     """
+    from datetime import datetime, timedelta, timezone
     note = _normalize_note(raw_note)
-    # Build expander title
     status      = str(row.get('status_stage', ''))
     status_lbl  = STATUS_LEGEND.get(status, f"Status {status}") if status else 'Unknown'
     jur_level   = row.get('jurisdiction_level', '')
@@ -422,96 +446,101 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
     jur_icon    = '🏛️' if jur_level == 'Federal' else ('🗺️' if jur_level == 'State' else '🌐')
     kw_raw      = str(row.get('keyword', '') or '')
     kw_tags     = [t.strip() for t in kw_raw.replace(';', ',').split(',') if t.strip()]
-    tracked_icon= '⭐ ' if bill_id in tracked_bills else ''
-    pos_icon    = f" · 🏷 {note['position']}" if note.get('position') else ''
-    prio_icon   = f" · 🔥 {note['priority']}" if note.get('priority') else ''
-
     disp_bill_number = row.get('bill_number', bill_id)
-    title_line = (
-        f"{tracked_icon}**{disp_bill_number}** — {row.get('title', 'No title')}  "
-        f"· {jur_icon} {jur_name} · 📋 {status_lbl}{pos_icon}{prio_icon}"
-    )
-
-    with st.expander(title_line):
-        # ── Info columns ────────────────────────────────────────────────────
-        info1, info2 = st.columns(2)
-        with info1:
-            st.write(f"**Jurisdiction:** {jur_level} — {jur_name}")
-            st.write(f"**Status:** {status_lbl} [{status}]")
-            st.write(f"**Status Date:** {row.get('status_date', '—')}")
-            st.write(f"**Session:** {row.get('session', '—')}")
-        with info2:
-            sponsors = str(row.get('sponsors', row.get('sponsor_names', '—')))
-            committees = row.get('committees', row.get('committee', '—'))
-            st.write(f"**Committee(s):** {committees}")
+    
+    with st.container(border=True):
+        c1, c2 = st.columns([5, 1])
+        with c1:
+            st.markdown(f"### {disp_bill_number}: {row.get('title', 'No title')}")
             
-            # --- Legislative Linking ---
-            st.caption("**Sponsors & Coauthors**")
+            indicator_html = f"<b>{jur_icon} {jur_name}</b> &nbsp;|&nbsp; 📋 {status_lbl}"
+            prio = note.get('priority')
+            if prio == 'High': indicator_html += " &nbsp;|&nbsp; <span style='color:red;'><b>🔥 High Priority</b></span>"
+            elif prio: indicator_html += f" &nbsp;|&nbsp; 🔥 {prio}"
+            
+            pos = note.get('position')
+            if pos: indicator_html += f" &nbsp;|&nbsp; 🏷️ <b>{pos}</b>"
+            
+            if bool(note.get('comment', '').strip()): indicator_html += " &nbsp;|&nbsp; 📝 Has Notes"
+            if bill_id in tracked_bills: indicator_html += " &nbsp;|&nbsp; ⭐ Tracked"
+            
+            st.markdown(indicator_html, unsafe_allow_html=True)
+
+            last_action = row.get('last_action', '')
+            last_action_date = row.get('last_action_date', '')
+            staleness_warning = ""
+            if last_action_date:
+                try:
+                    dt = datetime.strptime(str(last_action_date).split()[0], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+                    if dt < (now_utc - timedelta(days=540)):
+                        staleness_warning = " ⚠️ <i>(Warning: Last action is > 18 months old)</i>"
+                except: pass
+                
+            if last_action or last_action_date:
+                st.caption(f"**Last Action:** {last_action} ({last_action_date}){staleness_warning}", unsafe_allow_html=True)
+            
+            if kw_tags:
+                st.write(" ".join([f"`{t}`" for t in kw_tags]))
+
+            sponsors = str(row.get('sponsors', row.get('sponsor_names', '—')))
             if sponsors != '—' and sponsors.strip():
+                st.caption("**Sponsors & Coauthors**")
                 _sp_list = [s.strip() for s in sponsors.split(',') if s.strip()]
                 if _sp_list:
-                    sp_cols = st.columns(min(len(_sp_list), 3))
+                    sp_cols = st.columns(min(len(_sp_list), 5))
                     for idx, clean_sp in enumerate(_sp_list):
-                        with sp_cols[idx % 3]:
+                        with sp_cols[idx % 5]:
                             def jump_prof(sp=clean_sp):
                                 st.session_state.app_mode = "👔 Legislator Directory"
                                 st.session_state.active_profile = sp
-                            st.button(f"{clean_sp[:25]}", key=f"lnk_{key_prefix}_{idx}", help=f"View {clean_sp} Profile", on_click=jump_prof, type="tertiary", use_container_width=True)
-            if kw_tags:
-                badges = ' '.join([f'`{t}`' for t in kw_tags])
-                st.write(f"**Keyword Tags:** {badges}")
+                            st.button(f"{clean_sp[:25]}", key=f"lnk_{key_prefix}_{idx}", on_click=jump_prof, type="tertiary", use_container_width=True)
+
+        with c2:
+            if bill_id not in tracked_bills:
+                if st.button("⭐ Track", key=f"{key_prefix}_track", use_container_width=True):
+                    tracked_bills.append(bill_id)
+                    save_tracked(tracked_bills)
+                    st.toast(f"Tracked {disp_bill_number}")
+                    st.rerun()
+            else:
+                if st.button("❌ Untrack", key=f"{key_prefix}_untrack", use_container_width=True):
+                    try:
+                        tracked_bills.remove(bill_id)
+                        save_tracked(tracked_bills)
+                        st.toast(f"Untracked {disp_bill_number}")
+                        st.rerun()
+                    except: pass
+                    
             if row.get('url'):
-                st.markdown(f"[📄 Bill Text & History]({row['url']})")
+                st.link_button("📄 LegiScan", row['url'], use_container_width=True)
 
-        # ── Summary / Last Action ────────────────────────────────────────────
-        desc = row.get('description', '')
-        if desc:
-            st.write(f"**Summary:** {desc}")
-        last_action = row.get('last_action', '')
-        last_action_date = row.get('last_action_date', '')
-        if last_action or last_action_date:
-            st.write(f"**Last Action:** {last_action} ({last_action_date})")
-        subjects = row.get('subjects', '')
-        if subjects:
-            st.write(f"**Subjects:** {subjects}")
-        if note.get("last_reviewed"):
-            try:
-                _lr_dt = datetime.fromisoformat(note["last_reviewed"]).strftime("%Y-%m-%d %H:%M")
-                st.caption(f"Last reviewed: {_lr_dt}")
-            except:
-                pass
+        with st.expander("📝 View Details & Edit Notes"):
+            info1, info2 = st.columns(2)
+            with info1:
+                st.write(f"**Session:** {row.get('session', '—')}")
+                desc = row.get('description', '')
+                if desc: st.write(f"**Summary:** {desc}")
+                
+            with info2:
+                committees = row.get('committees', row.get('committee', '—'))
+                st.write(f"**Committee(s):** {committees}")
+                subjects = row.get('subjects', '')
+                if subjects: st.write(f"**Subjects:** {subjects}")
 
-        st.divider()
-
-        # ── Notes & annotations ─────────────────────────────────────────────
-        nc1, nc2 = st.columns(2)
-        with nc1:
-            new_comment = st.text_area(
-                "💬 Notes / Comments",
-                value=note.get("comment", ""),
-                key=f"{key_prefix}_comment"
-            )
-            new_links = st.text_input(
-                "🔗 Related Links (comma-separated)",
-                value=", ".join(note.get("links", [])),
-                key=f"{key_prefix}_links"
-            )
-        with nc2:
-            position = st.selectbox(
-                "🏷 Position", ["", "Support", "Oppose", "Watch", "Neutral", "No Position"],
-                index=["", "Support", "Oppose", "Watch", "Neutral", "No Position"].index(note.get("position", "")),
-                key=f"{key_prefix}_pos"
-            )
-            priority = st.selectbox(
-                "🔥 Priority", ["", "High", "Medium", "Low"],
-                index=["", "High", "Medium", "Low"].index(note.get("priority", "")),
-                key=f"{key_prefix}_prio"
-            )
-        uploaded_file = st.file_uploader("📎 Attach PDF", type=["pdf"], key=f"{key_prefix}_upload")
-
-        # ── Action buttons ──────────────────────────────────────────────────
-        ba1, ba2, ba3 = st.columns(3)
-        with ba1:
+            st.divider()
+            nc1, nc2 = st.columns(2)
+            with nc1:
+                new_comment = st.text_area("💬 Notes / Comments", value=note.get("comment", ""), key=f"{key_prefix}_cmt")
+                new_links = st.text_input("🔗 Related Links (comma-separated)", value=", ".join(note.get("links", [])), key=f"{key_prefix}_lnks")
+            with nc2:
+                position = st.selectbox("🏷 Position", ["", "Support", "Oppose", "Watch", "Neutral", "No Position"], 
+                                        index=["", "Support", "Oppose", "Watch", "Neutral", "No Position"].index(note.get("position", "")), key=f"{key_prefix}_pos")
+                priority = st.selectbox("🔥 Priority", ["", "High", "Medium", "Low"], 
+                                        index=["", "High", "Medium", "Low"].index(note.get("priority", "")), key=f"{key_prefix}_prio")
+            
+            uploaded_file = st.file_uploader("📎 Attach PDF", type=["pdf"], key=f"{key_prefix}_upl")
+            
             if st.button("💾 Save Notes", key=f"{key_prefix}_save"):
                 try:
                     note["comment"]  = new_comment
@@ -532,34 +561,12 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                 except Exception as e:
                     st.error(f"Error saving notes: {e}")
                     logger.error(f"Error saving notes for {bill_id}: {e}")
-
-        with ba2:
-            if bill_id not in tracked_bills:
-                if st.button("➕ Track This Bill", key=f"{key_prefix}_track"):
-                    try:
-                        tracked_bills.append(bill_id)
-                        if save_tracked(tracked_bills):
-                            st.success(f"✅ Now tracking {bill_id}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to track bill")
-                    except Exception as e:
-                        st.error(f"Error tracking bill: {e}")
-            else:
-                if st.button("❌ Untrack", key=f"{key_prefix}_untrack"):
-                    try:
-                        tracked_bills.remove(bill_id)
-                        if save_tracked(tracked_bills):
-                            st.success(f"Untracked {bill_id}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to untrack bill")
-                    except Exception as e:
-                        st.error(f"Error untracking bill: {e}")
-
-        with ba3:
-            if row.get('url'):
-                st.markdown(f"[🔗 Open on LegiScan]({row['url']})")
+            
+            if note.get("last_reviewed"):
+                try:
+                    _lr_dt = datetime.fromisoformat(note["last_reviewed"]).strftime("%Y-%m-%d %H:%M")
+                    st.caption(f"Last reviewed: {_lr_dt}")
+                except: pass
 
     return note
 
@@ -959,8 +966,9 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN CONTENT / WORKSPACE
 # ═══════════════════════════════════════════════════════════════════════════════
-st.title("🏛️ SCCA Bill Tracker Workspace")
-create_summary_dashboard(df, tracked_bills, bill_notes, corpus=corpus)
+st.title("🏛️ SCCA Bill Tracker")
+# We will invoke run_smart_header later dynamically inside each mode (All Bills, Keyword Matches, Tracked Bills) because we need the final df_count AFTER filters!
+
 st.divider()
 
 # Top sorting and workspace bar
@@ -1046,8 +1054,9 @@ if "All Bills" in app_mode:
                 db_df = db_df[db_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('priority', '') in st.session_state.tracked_prio)]
                 
         db_df = apply_sort(db_df, st.session_state.global_sort)
+        run_smart_header(len(db_df), "All Bills", corpus, tracked_bills)
         
-        st.caption(f"**ALL BILLS MODE** — Showing {len(db_df)} bills from Master Archive")
+        st.caption(f"Showing {len(db_df)} bills from Master Archive")
         for _, row in db_df.iterrows():
             bid = str(row.get('bill_id', 'Unknown'))
             _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"ab_{bid}")
@@ -1071,8 +1080,9 @@ elif "Keyword Matches" in app_mode:
             kw_df = kw_df[kw_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('priority', '') in st.session_state.tracked_prio)]
             
         kw_df = apply_sort(kw_df, st.session_state.global_sort)
+        run_smart_header(len(kw_df), "Keyword Matches", corpus, tracked_bills)
         
-        st.caption(f"**KEYWORD MODE** — Showing {len(kw_df)} matches from the Rescan Cache")
+        st.caption(f"Showing {len(kw_df)} matches from the Rescan Cache")
         for _, row in kw_df.iterrows():
             bid = str(row.get('bill_id', 'Unknown'))
             _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"kw_{bid}")
@@ -1138,8 +1148,9 @@ elif "Tracked Bills" in app_mode:
                 tr_df = tr_df[tr_df['bill_id'].astype(str).apply(is_recent)]
                 
         tr_df = apply_sort(tr_df, st.session_state.global_sort)
+        run_smart_header(len(tr_df), "Tracked Bills", corpus, tracked_bills)
         
-        st.caption(f"**TRACKED MODE** — Showing {len(tr_df)} Tracked Bills")
+        st.caption(f"Showing {len(tr_df)} Tracked Bills")
         for _, row in tr_df.iterrows():
             bid = str(row.get('bill_id', 'Unknown'))
             _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"tr_{bid}")
