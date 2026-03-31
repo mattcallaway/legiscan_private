@@ -19,7 +19,13 @@ CREATE TABLE IF NOT EXISTS legislators (
     state TEXT,
     district TEXT,
     party TEXT,
-    normalized_name TEXT
+    normalized_name TEXT,
+    normalized_full_name TEXT,
+    normalized_display_name TEXT,
+    normalized_last_name TEXT,
+    district_code TEXT,
+    district_number TEXT,
+    canonical_legislator_key TEXT
 );
 
 CREATE TABLE IF NOT EXISTS legislator_staff (
@@ -71,56 +77,74 @@ CREATE TABLE IF NOT EXISTS unmatched_staff_rows (
 );
 """
 
-def normalize_leg_name(name: str) -> str:
-    """Normalize legislator names for robust tracking."""
-    if pd.isna(name) or not name:
-        return ""
-    name_str = str(name).strip()
+def normalize_district(dist: str, chamber: str) -> tuple:
+    if pd.isna(dist) or not dist:
+        return "", ""
+    s = str(dist).strip().upper()
+    num = "".join(filter(str.isdigit, s))
+    if not num: 
+        return "", ""
+    c_prefix = "SD" if chamber.lower() == "senate" else "AD"
+    return f"{c_prefix}{num.zfill(2)}", str(int(num))
+
+def normalize_name_components(raw_name: str) -> dict:
+    if pd.isna(raw_name) or not raw_name:
+        return {"full": "", "display": "", "last": ""}
     
-    # Aggressively strip titles
+    name_str = str(raw_name).strip()
     titles_to_strip = [
-        "Sen.", "Senator", "Asm.", "Assemblymember", "Assembly Member", 
-        "Assemblywoman", "Assemblyman", "Dr.", "Hon.", "Representative", "Rep."
+        "State Senator", "State Sen.", "Sen.", "Senator", "Asm.", "Assemblymember", "Assembly Member", 
+        "Assemblywoman", "Assemblyman", "Dr.", "Hon.", "Representative", "Rep.", "Member"
     ]
-    # Use regex to strip boundaries
     pattern = r"^(?:" + "|".join([re.escape(t) for t in titles_to_strip]) + r")\b\s*"
     name_str = re.sub(pattern, "", name_str, flags=re.IGNORECASE).strip()
-    
-    # Remove everything in parentheses (like "D-LA")
     name_str = re.sub(r'\(.*?\)', '', name_str).strip()
-    
-    # Remove trailing punctuation
     name_str = re.sub(r'[,.]+$', '', name_str).strip()
+    name_str = re.sub(r'\s+', ' ', name_str)
     
-    return name_str.lower()
+    parts = name_str.split(" ")
+    last_name = parts[-1] if len(parts) > 0 else name_str
+    
+    return {
+        "full": name_str.lower(),
+        "display": name_str,
+        "last": last_name.lower()
+    }
 
-def exact_or_partial_match(query_name: str, leg_cache: dict) -> str:
-    """
-    Given a query like "Villapudua" and a cache {"carlos villapudua": leg_id},
-    find the best match. 
-    leg_cache dict structure: leg_cache[normalized_name] = leg_id
-    Returns matching leg_id or empty string.
-    """
-    query = normalize_leg_name(query_name)
-    if not query:
-        return ""
+def canonical_key(state: str, chamber: str, dist_code: str, last_name: str) -> str:
+    return f"{state}|{chamber}|{dist_code}|{last_name}".lower()
+
+def resolve_legislator(df: pd.DataFrame, norm_name: str, last_name: str, chamber: str, dist_code: str) -> tuple:
+    # Tier 1: Exact Canonical Match
+    c_key = canonical_key("CA", chamber, dist_code, last_name)
+    m1 = df[df['canonical_legislator_key'] == c_key]
+    if len(m1) == 1: return m1.iloc[0]['legislator_id'], "Tier 1: Canonical Key"
+    
+    # Tier 2: Chamber + District Unique Match
+    if dist_code and chamber:
+        m2 = df[(df['chamber'] == chamber) & (df['district_code'] == dist_code)]
+        if len(m2) == 1: return m2.iloc[0]['legislator_id'], "Tier 2: Chamber + District"
         
-    # 1. Exact match
-    if query in leg_cache:
-        return leg_cache[query]
+    # Tier 3: Full Normalized Name Exact
+    if norm_name:
+        m3 = df[df['normalized_full_name'] == norm_name]
+        if len(m3) == 1: return m3.iloc[0]['legislator_id'], "Tier 3: Exact Full Name"
         
-    # 2. Last name / partial contains match
-    # Example: query "Aghazarian" in "Greg Aghazarian"
-    for norm_name, l_id in leg_cache.items():
-        if query in norm_name.split() or norm_name in query.split():
-            return l_id
-            
-    # 3. Fuzzy partial substring (risky but catches "Villapudua, Carlos")
-    for norm_name, l_id in leg_cache.items():
-        if query in norm_name or norm_name in query:
-            return l_id
-            
-    return ""
+    # Tier 4: Unique Last Name within Chamber
+    if last_name and chamber:
+        m4 = df[(df['chamber'] == chamber) & (df['normalized_last_name'] == last_name)]
+        if len(m4) == 1: return m4.iloc[0]['legislator_id'], "Tier 4: Unique Last Name in Chamber"
+        
+    # Tier 4b: Unique Last Name Global
+    if last_name:
+        m4b = df[df['normalized_last_name'] == last_name]
+        if len(m4b) == 1: return m4b.iloc[0]['legislator_id'], "Tier 4b: Unique Last Name Global"
+        
+    # Ambiguous
+    return None, f"Ambiguous/Unmatched (Last Name Hits: {len(df[df['normalized_last_name'] == last_name]) if last_name else 0})"
+
+def normalize_leg_name(name: str) -> str:
+    return normalize_name_components(name)['full']
 
 def safe_split_names(names_str: str) -> List[str]:
     """Split staff names on `and`, `/`, `+`."""
@@ -157,6 +181,13 @@ class StaffManager:
                 for c in ["legislators_matched", "staff_created", "issues_created", "committees_created"]:
                     try:
                         conn.execute(f"ALTER TABLE staff_import_jobs ADD COLUMN {c} INTEGER DEFAULT 0")
+                    except sqlite3.OperationalError:
+                        pass
+                
+                # Canonical Migration
+                for c in ["normalized_full_name", "normalized_display_name", "normalized_last_name", "district_code", "district_number", "canonical_legislator_key"]:
+                    try:
+                        conn.execute(f"ALTER TABLE legislators ADD COLUMN {c} TEXT")
                     except sqlite3.OperationalError:
                         pass
         except Exception as e:
@@ -246,10 +277,14 @@ class StaffManager:
             dist_val = str(row.get("District", "")).strip()
             party_val = str(row.get("Party", "")).strip()
             
+            n_comps = normalize_name_components(name_val)
+            dist_code, dist_num = normalize_district(dist_val, chamber)
+            c_key = canonical_key(state, chamber, dist_code, n_comps['last'])
+            
             conn.execute("""
-                INSERT INTO legislators (legislator_id, name, chamber, state, district, party, normalized_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (leg_id, name_val, chamber, state, dist_val, party_val, norm_name))
+                INSERT INTO legislators (legislator_id, name, chamber, state, district, party, normalized_name, normalized_full_name, normalized_display_name, normalized_last_name, district_code, district_number, canonical_legislator_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (leg_id, name_val, chamber, state, dist_val, party_val, norm_name, n_comps['full'], n_comps['display'], n_comps['last'], dist_code, dist_num, c_key))
             stats["legislators_matched"] += 1
             
             for src_col, target_role, email_col in roles_mapping:
@@ -269,25 +304,32 @@ class StaffManager:
         if 'Member' not in df.columns:
             return
             
-        leg_cache = {}
-        for r in conn.execute("SELECT legislator_id, normalized_name, chamber FROM legislators").fetchall():
-            if r[2] == chamber:
-                leg_cache[r[1]] = r[0] # norm_name -> id
-                
+        leg_df = pd.read_sql("SELECT * FROM legislators", conn)
         issue_cols = [c for c in df.columns if c not in ["Member", "District", "Party"] and not str(c).startswith("Unnamed")]
         
         for _, row in df.iterrows():
             stats["processed"] += 1
             member = row.get("Member", "")
+            dist_val = str(row.get("District", "")).strip()
             if pd.isna(member) or not str(member).strip():
                 continue
                 
-            norm_name = normalize_leg_name(member)
-            leg_id = exact_or_partial_match(member, leg_cache)
+            n_comps = normalize_name_components(member)
+            d_code, _ = normalize_district(dist_val, chamber)
+            
+            leg_id, rsn = resolve_legislator(leg_df, n_comps['full'], n_comps['last'], chamber, d_code)
+            
             if not leg_id:
                 stats["unmatched"] += 1
+                unmatched_payload = {
+                    "raw_member": str(member),
+                    "raw_district": dist_val,
+                    "inferred_chamber": chamber,
+                    "norm_last": n_comps['last'],
+                    "norm_dist": d_code
+                }
                 conn.execute("INSERT INTO unmatched_staff_rows (raw_row_data, reason_unmatched) VALUES (?, ?)", 
-                             (str(row.to_dict()), f"No legislator found for {norm_name}"))
+                             (json.dumps(unmatched_payload), rsn))
                 continue
                 
             for issue_area in issue_cols:

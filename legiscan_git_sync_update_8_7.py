@@ -9,7 +9,7 @@ import sys
 
 from job_manager import JobManager
 from job_runner import run_bootstrap_job, run_refresh_job, run_rescan_job
-from staff_manager import StaffManager
+from staff_manager import StaffManager, resolve_legislator, normalize_name_components
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -1183,13 +1183,13 @@ elif "Legislator Directory" in app_mode:
             st.button("⬅️ Back to Directory", on_click=clear_prof)
             st.divider()
             
-            # Find the best match
+            # Find the best match using canonical resolving
             match = pd.DataFrame()
             if not leg_df.empty:
-                match = leg_df[
-                    leg_df['name'].str.contains(aptr, case=False, na=False) |
-                    leg_df['normalized_name'].str.contains(aptr, case=False, na=False)
-                ]
+                n_comps = normalize_name_components(aptr)
+                leg_id, rsn = resolve_legislator(leg_df, n_comps['full'], n_comps['last'], "", "")
+                if leg_id:
+                    match = leg_df[leg_df['legislator_id'] == leg_id]
                 
             if match.empty:
                 st.info(f"Using Master Corpus profile for: {aptr}")

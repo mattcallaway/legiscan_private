@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from staff_manager import StaffManager, exact_or_partial_match, normalize_leg_name
+from staff_manager import StaffManager, resolve_legislator, normalize_name_components
 
 def render_staff_diagnostics(staff_manager: StaffManager):
     """
@@ -36,36 +36,38 @@ def render_staff_diagnostics(staff_manager: StaffManager):
     st.subheader("🔍 Name Resolution Simulator")
     st.caption("Type exactly what you see in the Corpus/Bill Sponsor string to verify how the engine attempts to resolve it against the Staff table.")
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        test_str = st.text_input("Raw Corpus Name snippet:", placeholder="e.g. Villapudua")
-    
+        test_str = st.text_input("Name snippet:", placeholder="e.g. Cabaldon")
+    with col2:
+        test_cham = st.selectbox("Inferred Chamber:", ["", "Senate", "Assembly"])
+    with col3:
+        test_dist = st.text_input("Raw District:", placeholder="e.g. SD03")
+        
     if test_str:
-        # Load the cache dictionary dynamically
         try:
             leg_df = staff_manager.get_all_legislators()
-            leg_cache = {row['normalized_name']: row['legislator_id'] for _, row in leg_df.iterrows()}
-        except Exception as e:
-            st.error(f"Cannot load cache: {e}")
-            leg_cache = {}
+        except:
+            leg_df = pd.DataFrame()
             
-        with col2:
+        with col4:
             st.write("**Normalization Yield:**")
-            norm_res = normalize_leg_name(test_str)
-            st.code(norm_res if norm_res else "<Empty>")
+            n_comps = normalize_name_components(test_str)
+            st.code(n_comps['full'] if n_comps['full'] else "<Empty>")
             
-        leg_id = exact_or_partial_match(test_str, leg_cache)
+        leg_id, rsn = resolve_legislator(leg_df, n_comps['full'], n_comps['last'], test_cham, test_dist)
         if leg_id:
-            st.success("✅ **Resolution Successful!**")
+            st.success(f"✅ **Resolution Successful!** ({rsn})")
             hit = leg_df[leg_df['legislator_id'] == leg_id].iloc[0]
             st.json({
                 "Matched Target": hit['name'],
                 "Chamber": hit['chamber'],
                 "District": hit['district'],
-                "Stored Normalized Key": hit['normalized_name']
+                "Stored Normalized Key": hit['normalized_name'],
+                "Canonical Key": hit.get('canonical_legislator_key', 'N/A')
             })
         else:
-            st.error("❌ **Resolution Failed.** This string will drop to the sparse Corpus-scraped profile.")
+            st.error(f"❌ **Resolution Failed.** Reason: {rsn}")
             
     st.divider()
     
