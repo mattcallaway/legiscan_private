@@ -453,10 +453,10 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                     sp_cols = st.columns(min(len(_sp_list), 3))
                     for idx, clean_sp in enumerate(_sp_list):
                         with sp_cols[idx % 3]:
-                            if st.button(f"👔 {clean_sp[:20]}", key=f"lnk_{key_prefix}_{idx}", help=f"View {clean_sp} Profile"):
+                            def jump_prof(sp=clean_sp):
                                 st.session_state.app_mode = "👔 Legislator Directory"
-                                st.session_state.active_profile = clean_sp
-                                st.rerun()
+                                st.session_state.active_profile = sp
+                            st.button(f"👔 {clean_sp[:20]}", key=f"lnk_{key_prefix}_{idx}", help=f"View {clean_sp} Profile", on_click=jump_prof)
             if kw_tags:
                 badges = ' '.join([f'`{t}`' for t in kw_tags])
                 st.write(f"**Keyword Tags:** {badges}")
