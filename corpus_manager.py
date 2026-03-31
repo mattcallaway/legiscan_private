@@ -560,10 +560,11 @@ class CorpusManager:
         try:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
                 all_names = zf.namelist()
-                # Prefer paths that clearly contain bill data
-                bill_files = [n for n in all_names if n.endswith(".json") and "/bill/" in n.lower()]
-                vote_files = [n for n in all_names if n.endswith(".json") and "/vote/" in n.lower()]
-                person_files = [n for n in all_names if n.endswith(".json") and "/person/" in n.lower()]
+                # Prefer paths that clearly contain data by ensuring they have leading slashes
+                # to match directories like "/bill/" even if they are at the root "bill/".
+                bill_files = [n for n in all_names if n.endswith(".json") and "/bill/" in f"/{n.lower()}"]
+                vote_files = [n for n in all_names if n.endswith(".json") and "/vote/" in f"/{n.lower()}"]
+                person_files = [n for n in all_names if n.endswith(".json") and "/person/" in f"/{n.lower()}"]
                 
                 if not bill_files:
                     bill_files = [n for n in all_names if n.endswith(".json") and "masterlist" not in n.lower()]
