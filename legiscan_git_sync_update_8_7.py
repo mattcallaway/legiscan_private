@@ -4,6 +4,11 @@ import os
 import json
 from datetime import datetime
 import logging
+import importlib
+import sys
+
+from job_manager import JobManager
+from job_runner import run_bootstrap_job, run_refresh_job, run_rescan_job
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -559,6 +564,12 @@ except Exception as e:
 
 # ── Initialize CorpusManager ──────────────────────────────────────────────────
 # Legacy compatibility: corpus is None when corpus_manager.py is absent or DB fails.
+try:
+    job_manager = JobManager(os.path.join(DATA_DIR, "jobs.db"))
+except Exception as e:
+    logger.error(f"Failed to load JobManager: {e}")
+    job_manager = None
+
 corpus = None
 if _CORPUS_AVAILABLE:
     try:
@@ -786,13 +797,29 @@ if "⭐ Tracked Bills" in app_mode:
 # ── F. ADMIN / DATA TOOLS (Expander) ──────────────────────────────────────────
 st.sidebar.divider()
 with st.sidebar.expander("⚙️ Admin & Database Tools"):
+    
+    st.header("📊 System Status")
+    if job_manager:
+        r_jobs = job_manager.get_recent_jobs(1)
+        st.caption(f"Last Job: {r_jobs[0]['job_type']} ({r_jobs[0]['status']})" if r_jobs else "Last Job: None")
+        running_jobs = job_manager.get_running_jobs()
+        if running_jobs:
+            st.warning(f"⚠️ {len(running_jobs)} job(s) currently running!")
+    if corpus:
+        c_stats = corpus.get_corpus_stats()
+        st.write(f"Corpus Size: {c_stats['total_bills']:,} bills")
+    st.divider()
+
     st.header("🔄 Keyword Rescan")
+    st.caption("Scans the API for bills mentioning monitored keywords.")
     _rescan_states = st.multiselect(
         "States", options=sorted(US_STATES.values()),
         default=["California"], key="rescan_states"
     )
     _rescan_federal = st.checkbox("Include Federal", value=True, key="rescan_federal")
-    if st.button("▶️ Run Keyword Rescan", key="run_rescan"):
+    
+    _lock_rescan = running_jobs and any(_j['job_type'] == 'keyword_rescan' for _j in running_jobs)
+    if st.button("▶️ Run Keyword Rescan", key="run_rescan", disabled=_lock_rescan):
         if not _rescan_states and not _rescan_federal:
             st.warning("Select at least one jurisdiction.")
         else:
@@ -802,31 +829,22 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                     _api_states = [_sc2nc.get(s, s) for s in _rescan_states]
                     if _rescan_federal:
                         _api_states.append("US")
-                    stats = run_scan(states=list(set(_api_states)), data_dir=DATA_DIR, corpus_manager=corpus)
+                    stats = run_rescan_job(corpus, list(set(_api_states)), DATA_DIR, job_manager, initiated_by="ui")
                     sync_with_remote()
                     load_data.clear()
-                    st.session_state.scan_stats = stats
+                    st.success("Rescan completed!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Rescan failed: {e}")
 
-    if "scan_stats" in st.session_state:
-        _sc = st.session_state.scan_stats
-        st.info(
-            f"Found: {_sc.get('total_found', 0)} · "
-            f"New: {_sc.get('new_bills', 0)} · "
-            f"Updated: {_sc.get('changed_status', 0)}"
-        )
-        if st.button("Dismiss", key="dismiss_scan_stats"):
-            del st.session_state.scan_stats
-            st.rerun()
-
     st.divider()
-    st.header("📚 Master Corpus DB")
+    st.header("📚 Master Corpus Tasks")
+    st.caption("Synchronizes entire session bill details to local SQLite.")
     if corpus:
         _cached_sessions = corpus.get_cached_sessions()
         _session_opts = {f"{s['jurisdiction']} — {s['session_name']}": s for s in _cached_sessions}
-        if st.button("🔍 Discover Sessions (CA + US)", key="corpus_discover"):
+        
+        if st.button("🔍 Discover Target Sessions", key="corpus_discover"):
             with st.spinner("Discovering..."):
                 corpus.get_active_sessions("CA")
                 corpus.get_active_sessions("US")
@@ -834,14 +852,35 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                 
         _sel_label = st.selectbox("Session", options=list(_session_opts.keys()) if _session_opts else ["(none)"], key="corpus_session_select")
         _sel_session = _session_opts.get(_sel_label)
-        if st.button("⬇️ Bootstrap Bulk Zip", key="corpus_bootstrap") and _sel_session:
-            _pb = st.progress(0, text="Bootstrapping...")
-            corpus.bootstrap_session(_sel_session["session_id"], _sel_session["jurisdiction"], lambda f, m: _pb.progress(min(f, 1.0), text=m))
-            _pb.progress(1.0, text="Done")
-        if st.button("🔄 Incremental API Update", key="corpus_refresh") and _sel_session:
+        
+        st.markdown("**Incremental Refresh** (cheap, periodic)")
+        _lock_refresh = running_jobs and any(_j['job_type'] == 'incremental_refresh' for _j in running_jobs)
+        if st.button("🔄 Refresh Session Updates", key="corpus_refresh", disabled=not _sel_session or _lock_refresh):
             _rb = st.progress(0, text="Refreshing...")
-            corpus.refresh_session(_sel_session["session_id"], _sel_session["jurisdiction"], lambda f, m: _rb.progress(min(f, 1.0), text=m))
+            run_refresh_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _rb.progress(min(f, 1.0), text=m))
             _rb.progress(1.0, text="Done")
+            st.rerun()
+            
+        st.markdown("**Bulk Bootstrap** (expensive, initial load)")
+        _lock_boot = running_jobs and any(_j['job_type'] == 'bootstrap_corpus' for _j in running_jobs)
+        _confirm_boot = st.checkbox("I understand Bootstrap takes several minutes", key="confirm_boot")
+        if st.button("⬇️ Execute Bootstrap Dump", key="corpus_bootstrap", disabled=not (_sel_session and _confirm_boot) or _lock_boot):
+            _pb = st.progress(0, text="Bootstrapping...")
+            run_bootstrap_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _pb.progress(min(f, 1.0), text=m))
+            _pb.progress(1.0, text="Done")
+            st.rerun()
+
+    st.divider()
+    st.header("📋 Recent Jobs Log")
+    if job_manager:
+        recent = job_manager.get_recent_jobs(5)
+        if recent:
+            for j in recent:
+                icon = "✅" if j['status'] == 'SUCCESS' else ("❌" if j['status'] == 'FAILED' else "🔄")
+                st.write(f"{icon} **{j['job_type']}** ({j['jurisdiction']})")
+                st.caption(f"Elapsed: {j['duration_sec'] or 0:.1f}s · Added: {j['new_items']} · Updated: {j['updated_items']}")
+        else:
+            st.caption("No jobs logged yet.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN CONTENT / WORKSPACE
