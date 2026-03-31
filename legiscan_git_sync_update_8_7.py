@@ -9,24 +9,31 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-from config               import DATA_DIR
+from config               import DATA_DIR, API_KEY
 from sync_github_repo     import ensure_repo, sync_with_remote
 from legiscanner          import run_scan, CSV_FILE, KEYWORDS_FILE
 
-ensure_repo()   # still make sure the repo is pulled
+# ── Corpus manager (Layer A — master bill corpus) ─────────────────────────────
+# Guarded import: if corpus_manager.py is absent the app falls back gracefully.
+try:
+    from corpus_manager import CorpusManager as _CorpusManager
+    _CORPUS_AVAILABLE = True
+except ImportError:
+    _CORPUS_AVAILABLE = False
+
+ensure_repo()   # pull latest from remote on startup
 
 DATA_FILE    = CSV_FILE
 TRACKED_FILE = os.path.join(DATA_DIR, "tracked_bills.json")
 NOTES_FILE   = os.path.join(DATA_DIR, "bill_notes.json")
 EXPORT_FILE  = os.path.join(DATA_DIR, "Tracked_Bills_Export.csv")
+VIEWS_FILE   = os.path.join(DATA_DIR, "saved_views.json")
 UPLOAD_DIR   = os.path.join(DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
 st.set_page_config(page_title="SCCA Bill Tracker", layout="wide")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# State and Federal Configuration
+# ─── Constants ────────────────────────────────────────────────────────────────
 US_STATES = {
     'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas', 'CA': 'California',
     'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware', 'FL': 'Florida', 'GA': 'Georgia',
@@ -43,37 +50,34 @@ US_STATES = {
 }
 
 FEDERAL_TYPES = {
-    'US_HOUSE': 'U.S. House of Representatives',
-    'US_SENATE': 'U.S. Senate',
-    'CONGRESS': 'U.S. Congress (Both Chambers)',
+    'US_HOUSE':       'U.S. House of Representatives',
+    'US_SENATE':      'U.S. Senate',
+    'CONGRESS':       'U.S. Congress (Both Chambers)',
     'FEDERAL_AGENCY': 'Federal Agency Rules/Regulations'
 }
 
 STATUS_LEGEND = {
-    "1": "Introduced",
-    "2": "In Committee",
-    "3": "Reported",
-    "4": "Passed One Chamber",
-    "5": "Passed Both Chambers",
-    "6": "Signed by Governor",
-    "7": "Vetoed",
-    "8": "Failed",
-    "9": "Withdrawn",
+    "1": "Introduced",         "2": "In Committee",          "3": "Reported",
+    "4": "Passed One Chamber", "5": "Passed Both Chambers",   "6": "Signed by Governor",
+    "7": "Vetoed",             "8": "Failed",                  "9": "Withdrawn",
     "10": "Dead"
 }
-# Default jurisdiction levels if needed during script runs
-jurisdiction_levels = ["All", "State", "Federal"]
 
-# Ensure selected_states is always defined
-if "selected_states" not in st.session_state:
-    st.session_state.selected_states = []
-selected_states = st.session_state.selected_states
+# ─── Session-state defaults ───────────────────────────────────────────────────
+_STATE_DEFAULTS = {
+    "selected_states":       [],
+    "selected_federal_types":[],
+    "status_options":        None,   # initialised after CSV load
+    "friendly_status_options": None,
+    "friendly_to_code":      None,
+    "active_view_name":      None,
+}
+for _k, _v in _STATE_DEFAULTS.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
-# Ensure selected_federal_types is always defined
-if "selected_federal_types" not in st.session_state:
-    st.session_state.selected_federal_types = []
-selected_federal_types = st.session_state.selected_federal_types
 
+# ─── Status helpers ───────────────────────────────────────────────────────────
 def regenerate_friendly_status_options():
     st.session_state.friendly_status_options = [
         f"{STATUS_LEGEND.get(s, s)} [{s}]" for s in st.session_state.status_options
@@ -83,759 +87,958 @@ def regenerate_friendly_status_options():
     }
 
 
+# ─── Jurisdiction helpers ─────────────────────────────────────────────────────
 def get_jurisdiction_from_bill_number(bill_number):
-    """Extract jurisdiction from bill number"""
+    """Extract jurisdiction from bill number (best-effort fallback)."""
     if not bill_number:
         return 'Unknown', 'Unknown'
-    
     bill_number = str(bill_number).upper()
-    
-    # Federal patterns
-    if any(pattern in bill_number for pattern in ['HR', 'S.', 'H.R.', 'HJ', 'SJ', 'HC', 'SC']):
+    if any(p in bill_number for p in ['HR', 'S.', 'H.R.', 'HJ', 'SJ', 'HC', 'SC']):
         if bill_number.startswith(('HR', 'H.R.', 'HJ', 'HC')):
             return 'Federal', 'U.S. House of Representatives'
         elif bill_number.startswith(('S.', 'SJ', 'SC')):
             return 'Federal', 'U.S. Senate'
-        else:
-            return 'Federal', 'U.S. Congress'
-    
-    # State patterns - look for state prefixes
+        return 'Federal', 'U.S. Congress'
     for state_code, state_name in US_STATES.items():
-        if bill_number.startswith(f'{state_code}-') or f'{state_code}' in bill_number[:4]:
+        if bill_number.startswith(f'{state_code}-') or bill_number[:len(state_code)] == state_code:
             return 'State', state_name
-    
-    # Common state bill patterns
-    state_patterns = {
-        'AB': 'California', 'SB': 'California', 'ACR': 'California', 'SCR': 'California',
-        'HB': 'Various States', 'SB': 'Various States'
-    }
-    
-    for pattern, state in state_patterns.items():
-        if bill_number.startswith(pattern):
-            if pattern in ['AB', 'ACR', 'SCR'] and state == 'California':
-                return 'State', 'California'
-            else:
-                return 'State', 'Various States'
-    
+    ca_prefixes = ('AB', 'ACR', 'SCR', 'AJR', 'SJR', 'SB')
+    if bill_number.startswith(ca_prefixes):
+        return 'State', 'California'
     return 'Unknown', 'Unknown'
+
 
 def apply_jurisdiction_columns(df, func):
     if 'bill_number' not in df.columns:
         return df
-
-    # Initialize new columns
     df['jurisdiction_level'] = None
-    df['jurisdiction_name'] = None
-
-    # Apply function safely
+    df['jurisdiction_name']  = None
     for i, val in df['bill_number'].dropna().items():
         result = func(val)
         if isinstance(result, (list, tuple)) and len(result) == 2:
             df.at[i, 'jurisdiction_level'] = result[0]
-            df.at[i, 'jurisdiction_name'] = result[1]
+            df.at[i, 'jurisdiction_name']  = result[1]
         else:
             df.at[i, 'jurisdiction_level'] = 'Unknown'
-            df.at[i, 'jurisdiction_name'] = 'Unknown'
+            df.at[i, 'jurisdiction_name']  = 'Unknown'
     return df
 
+
+# ─── Data-loading functions (Layer B — keyword CSV) ───────────────────────────
 @st.cache_data
 def load_data():
-    """Load bill data with error handling"""
+    """Load bill data from the keyword-match CSV (Layer B)."""
     try:
         if os.path.exists(DATA_FILE):
             df = pd.read_csv(DATA_FILE)
-            logger.info(f"Loaded {len(df)} bills from data file")
-            
-            # Add jurisdiction columns if they don't exist
+            logger.info(f"Loaded {len(df)} bills from CSV")
             if 'jurisdiction_level' not in df.columns or 'jurisdiction_name' not in df.columns:
                 df = apply_jurisdiction_columns(df, get_jurisdiction_from_bill_number)
-
-
-            
             return df
-        else:
-            logger.warning("Data file not found")
-            return pd.DataFrame()
+        logger.warning("CSV data file not found")
+        return pd.DataFrame()
     except Exception as e:
         logger.error(f"Error loading data: {e}")
         st.error(f"Error loading bill data: {e}")
         return pd.DataFrame()
 
+
 def load_keywords():
-    """Load keywords with error handling"""
     try:
         if os.path.exists(KEYWORDS_FILE):
             with open(KEYWORDS_FILE, "r") as f:
-                keywords = json.load(f)
-                logger.info(f"Loaded {len(keywords)} keywords")
-                return keywords
-        else:
-            default_keywords = ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
-            logger.info("Using default keywords")
-            return default_keywords
+                return json.load(f)
+        return ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
     except Exception as e:
         logger.error(f"Error loading keywords: {e}")
-        st.error(f"Error loading keywords: {e}")
         return ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
 
+
 def save_keywords(keywords):
-    """Save keywords with error handling"""
+    """Write atomically THEN sync."""
     try:
-        sync_with_remote()
-        with open(KEYWORDS_FILE, "w") as f:
+        tmp_file = KEYWORDS_FILE + ".tmp"
+        with open(tmp_file, "w") as f:
             json.dump(sorted(set(keywords)), f)
-        logger.info(f"Saved {len(keywords)} keywords")
+        os.replace(tmp_file, KEYWORDS_FILE)
+        sync_with_remote()
         return True
     except Exception as e:
         logger.error(f"Error saving keywords: {e}")
         st.error(f"Error saving keywords: {e}")
         return False
 
+
+def load_saved_views():
+    try:
+        if os.path.exists(VIEWS_FILE):
+            with open(VIEWS_FILE, "r") as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading saved views: {e}")
+        return {}
+
+def save_saved_views(views):
+    """Write atomically THEN sync."""
+    try:
+        tmp_file = VIEWS_FILE + ".tmp"
+        with open(tmp_file, "w") as f:
+            json.dump(views, f, indent=2)
+        os.replace(tmp_file, VIEWS_FILE)
+        sync_with_remote()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving views: {e}")
+        st.error(f"Error saving views: {e}")
+        return False
+
 def load_tracked():
-    """Load tracked bills with error handling"""
     try:
         if os.path.exists(TRACKED_FILE):
             with open(TRACKED_FILE, "r") as f:
-                tracked = json.load(f)
-                logger.info(f"Loaded {len(tracked)} tracked bills")
-                return tracked
-        else:
-            logger.info("No tracked bills file found")
-            return []
+                return json.load(f)
+        return []
     except Exception as e:
         logger.error(f"Error loading tracked bills: {e}")
-        st.error(f"Error loading tracked bills: {e}")
         return []
 
+
 def save_tracked(tracked):
-    """Save tracked bills with error handling"""
+    """Write atomically THEN sync."""
     try:
-        sync_with_remote()
-        with open(TRACKED_FILE, "w") as f:
+        tmp_file = TRACKED_FILE + ".tmp"
+        with open(tmp_file, "w") as f:
             json.dump(tracked, f)
-        logger.info(f"Saved {len(tracked)} tracked bills")
+        os.replace(tmp_file, TRACKED_FILE)
+        sync_with_remote()
         return True
     except Exception as e:
         logger.error(f"Error saving tracked bills: {e}")
         st.error(f"Error saving tracked bills: {e}")
         return False
 
+
 def load_notes():
-    """Load bill notes with error handling"""
     try:
         if os.path.exists(NOTES_FILE):
             with open(NOTES_FILE, "r") as f:
-                notes = json.load(f)
-                logger.info(f"Loaded notes for {len(notes)} bills")
-                return notes
-        else:
-            logger.info("No notes file found")
-            return {}
+                return json.load(f)
+        return {}
     except Exception as e:
         logger.error(f"Error loading notes: {e}")
-        st.error(f"Error loading notes: {e}")
         return {}
 
+
 def save_notes(notes):
-    """Save bill notes with error handling"""
+    """Write atomically THEN sync."""
     try:
-        sync_with_remote()
-        with open(NOTES_FILE, "w") as f:
+        tmp_file = NOTES_FILE + ".tmp"
+        with open(tmp_file, "w") as f:
             json.dump(notes, f, indent=2)
-        logger.info(f"Saved notes for {len(notes)} bills")
+        os.replace(tmp_file, NOTES_FILE)
+        sync_with_remote()
         return True
     except Exception as e:
         logger.error(f"Error saving notes: {e}")
         st.error(f"Error saving notes: {e}")
         return False
 
-def search_bills(df, search_term):
-    """Search bills by title, sponsor, description, or bill number"""
-    if not search_term or df.empty:
+
+# ─── Search helper ────────────────────────────────────────────────────────────
+def search_df(df: pd.DataFrame, query: str) -> pd.DataFrame:
+    """Full-text search across standard CSV columns."""
+    if not query or df.empty:
         return df
-    
-    search_term = search_term.lower()
-    
-    # Safe fallback if columns are missing
-    for col in ['title', 'sponsors', 'description', 'bill_number', 'committees']:
+    q = query.lower()
+    for col in ['title', 'sponsors', 'sponsor_names', 'description', 'bill_number', 'subjects', 'keyword']:
         if col not in df.columns:
             df[col] = ''
-            
     mask = (
-        df['title'].str.lower().str.contains(search_term, na=False) |
-        df['sponsors'].str.lower().str.contains(search_term, na=False) |
-        df['description'].str.lower().str.contains(search_term, na=False) |
-        df['bill_number'].str.lower().str.contains(search_term, na=False) |
-        df['committees'].str.lower().str.contains(search_term, na=False)
+        df['title'].str.lower().str.contains(q, na=False)
+        | df['description'].str.lower().str.contains(q, na=False)
+        | df['bill_number'].str.lower().str.contains(q, na=False)
+        | df['sponsors'].str.lower().str.contains(q, na=False)
+        | df['subjects'].str.lower().str.contains(q, na=False)
+        | df['keyword'].str.lower().str.contains(q, na=False)
     )
     return df[mask]
 
-def create_summary_dashboard(df, tracked_bills, bill_notes):
-    """Create a summary dashboard with key metrics"""
-    st.subheader("📊 Dashboard Summary")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total Bills", len(df))
-    
-    with col2:
-        st.metric("Tracked Bills", len(tracked_bills))
-    
-    with col3:
-        high_priority_count = sum(1 for bill_id in tracked_bills 
-                                 if bill_notes.get(bill_id, {}).get("priority") == "High")
-        st.metric("High Priority", high_priority_count)
-    
-    with col4:
-        support_count = sum(1 for bill_id in tracked_bills 
-                           if bill_notes.get(bill_id, {}).get("position") == "Support")
-        st.metric("Support Position", support_count)
-    
-    with col5:
-        federal_count = len(df[df['jurisdiction_level'] == 'Federal']) if 'jurisdiction_level' in df.columns else 0
-        st.metric("Federal Bills", federal_count)
-    
-    # Jurisdiction and Status breakdown
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.subheader("🏛️ Bills by Jurisdiction")
-        if not df.empty and 'jurisdiction_level' in df.columns:
-            jurisdiction_counts = df['jurisdiction_level'].value_counts()
-            st.bar_chart(jurisdiction_counts)
-        else:
-            st.info("No jurisdiction data available")
-    
-    with col2:
-        st.subheader("📈 Bills by Status")
-        if not df.empty and 'status_stage' in df.columns:
-            status_counts = df['status_stage'].value_counts()
-            st.bar_chart(status_counts)
-        else:
-            st.info("No status data available")
-    
-    with col3:
-        st.subheader("🏷️ Tracked Bills by Position")
-        if tracked_bills:
-            positions = [bill_notes.get(bill_id, {}).get("position", "Unassigned") 
-                        for bill_id in tracked_bills]
-            position_counts = pd.Series(positions).value_counts()
-            st.bar_chart(position_counts)
-        else:
-            st.info("No tracked bills")
 
-# Load data with error handling
+# ─── Sort helper ──────────────────────────────────────────────────────────────
+_SORT_OPTIONS = ["Most Recent Action", "Status Date (Newest)", "Bill Number A→Z", "Status Stage"]
+_TRACKED_SORT_OPTIONS = ["Most Recent Action", "Status Date (Newest)", "Bill Number A→Z", "Status Stage", "Priority (High First)", "Last Reviewed (Newest)"]
+
+def apply_sort(df: pd.DataFrame, sort_key: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if sort_key == "Most Recent Action":
+        col = 'last_action_date' if 'last_action_date' in df.columns else 'status_date'
+        return df.sort_values(col, ascending=False, na_position='last')
+    if sort_key == "Status Date (Newest)":
+        if 'status_date' in df.columns:
+            return df.sort_values('status_date', ascending=False, na_position='last')
+    if sort_key == "Bill Number A→Z":
+        if 'bill_number' in df.columns:
+            return df.sort_values('bill_number', ascending=True, na_position='last')
+    if sort_key == "Status Stage":
+        if 'status_stage' in df.columns:
+            return df.sort_values('status_stage', ascending=True, na_position='last')
+    if sort_key == "Priority (High First)":
+        if 'priority' in df.columns:
+            prio_map = {"High": 1, "Medium": 2, "Low": 3, "": 4}
+            df['_prio_sort'] = df['priority'].map(lambda x: prio_map.get(x, 4))
+            return df.sort_values('_prio_sort', ascending=True).drop(columns=['_prio_sort'])
+    if sort_key == "Last Reviewed (Newest)":
+        if 'last_reviewed' in df.columns:
+            return df.sort_values('last_reviewed', ascending=False, na_position='last')
+    return df
+
+
+# ─── Corpus helpers ───────────────────────────────────────────────────────────
+def get_corpus_status_options(corpus) -> list:
+    """Distinct status_stage values from corpus DB (used in All Bills tab)."""
+    if corpus is None:
+        return []
+    try:
+        rows = corpus._get_conn().execute(
+            "SELECT DISTINCT status_stage FROM bills "
+            "WHERE status_stage IS NOT NULL ORDER BY CAST(status_stage AS INTEGER)"
+        ).fetchall()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
+
+
+def get_tracked_bills_df(tracked_bills, corpus, df_csv: pd.DataFrame) -> pd.DataFrame:
+    """
+    Return a DataFrame of all tracked bills.
+    Prefers corpus data; falls back to CSV rows for any not found in corpus.
+    Compatible with _render_bill_card() column expectations.
+    """
+    if not tracked_bills:
+        return pd.DataFrame()
+
+    # Try corpus first
+    corpus_df = pd.DataFrame()
+    if corpus is not None:
+        try:
+            corpus_df = corpus.get_bills_by_ids(tracked_bills)
+        except Exception as e:
+            logger.warning(f"Tracked bills corpus lookup failed: {e}")
+            corpus_df = pd.DataFrame()
+
+    found_in_corpus = set(corpus_df['bill_id'].astype(str).tolist()) if not corpus_df.empty else set()
+
+    # Fall back to CSV for any bills not found in corpus
+    missing = [b for b in tracked_bills if b not in found_in_corpus]
+    csv_fallback = pd.DataFrame()
+    if missing and not df_csv.empty and 'bill_id' in df_csv.columns:
+        csv_fallback = df_csv[df_csv['bill_id'].astype(str).isin(missing)].copy()
+
+    frames = [f for f in [corpus_df, csv_fallback] if not f.empty]
+    if not frames:
+        return pd.DataFrame()
+    result = pd.concat(frames, ignore_index=True)
+    # Preserve tracked_bills ordering
+    order = {b: i for i, b in enumerate(tracked_bills)}
+    result['_order'] = result['bill_id'].astype(str).map(lambda x: order.get(x, 9999))
+    return result.sort_values('_order').drop(columns=['_order'])
+
+
+def build_export_df(source_df: pd.DataFrame, bill_notes: dict, tracked_bills: list) -> pd.DataFrame:
+    if source_df.empty:
+        return pd.DataFrame()
+    export_df = source_df.copy()
+    
+    for col in ['jurisdiction_level', 'jurisdiction_name', 'session', 'status_stage', 'status_date', 
+                'last_action', 'last_action_date', 'subjects', 'sponsors', 'committees', 'keyword', 'url']:
+        if col not in export_df.columns:
+            export_df[col] = ''
+            
+    export_df['tracked'] = export_df['bill_id'].astype(str).apply(lambda x: 'Yes' if x in tracked_bills else 'No')
+    export_df['position'] = export_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get("position", ""))
+    export_df['priority'] = export_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get("priority", ""))
+    export_df['notes_comment'] = export_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get("comment", ""))
+    export_df['notes_links'] = export_df['bill_id'].astype(str).apply(lambda x: ", ".join(bill_notes.get(x, {}).get("links", [])))
+    export_df['last_reviewed'] = export_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get("last_reviewed", ""))
+    
+    cols = [
+        'bill_number', 'title', 'jurisdiction_level', 'jurisdiction_name', 'session',
+        'status_stage', 'status_date', 'last_action', 'last_action_date',
+        'subjects', 'sponsors', 'committees', 'keyword', 'url',
+        'tracked', 'position', 'priority', 'notes_comment', 'notes_links', 'last_reviewed'
+    ]
+    cols = [c for c in cols if c in export_df.columns]
+    return export_df[cols]
+
+# ─── Dashboard ────────────────────────────────────────────────────────────────
+def create_summary_dashboard(df, tracked_bills, bill_notes, corpus=None):
+    """Top-level metrics bar.  Shows corpus total when available."""
+    col1, col2, col3, col4, col5 = st.columns(5)
+    corpus_stats  = corpus.get_corpus_stats() if corpus else None
+    total_bills   = corpus_stats["total_bills"] if corpus_stats else len(df)
+    total_label   = "Corpus Bills" if corpus_stats else "Keyword Bills"
+    high_priority = sum(1 for b in tracked_bills if bill_notes.get(b, {}).get("priority") == "High")
+    support_count = sum(1 for b in tracked_bills if bill_notes.get(b, {}).get("position") == "Support")
+    with col1: st.metric(total_label, f"{total_bills:,}")
+    with col2: st.metric("Keyword Matches (CSV)", len(df))
+    with col3: st.metric("Tracked Bills", len(tracked_bills))
+    with col4: st.metric("High Priority", high_priority)
+    with col5: st.metric("Support Position", support_count)
+
+
+# ─── Bill card renderer ───────────────────────────────────────────────────────
+def _normalize_note(note: dict) -> dict:
+    return {
+        "comment":       note.get("comment", ""),
+        "links":         note.get("links", []),
+        "files":         note.get("files", []),
+        "position":      note.get("position", ""),
+        "priority":      note.get("priority", ""),
+        "last_reviewed": note.get("last_reviewed", ""),
+    }
+
+def _render_bill_card(row, raw_note: dict, bill_id: str,
+                      bill_notes: dict, tracked_bills: list,
+                      key_prefix: str) -> dict:
+    """
+    Render a single bill as a rich expandable card.
+    Track / Untrack button is INSIDE the expander.
+    Returns the (possibly updated) note dict.
+    """
+    note = _normalize_note(raw_note)
+    # Build expander title
+    status      = str(row.get('status_stage', ''))
+    status_lbl  = STATUS_LEGEND.get(status, f"Status {status}") if status else 'Unknown'
+    jur_level   = row.get('jurisdiction_level', '')
+    jur_name    = row.get('jurisdiction_name', '')
+    jur_icon    = '🏛️' if jur_level == 'Federal' else ('🗺️' if jur_level == 'State' else '🌐')
+    kw_raw      = str(row.get('keyword', '') or '')
+    kw_tags     = [t.strip() for t in kw_raw.replace(';', ',').split(',') if t.strip()]
+    tracked_icon= '⭐ ' if bill_id in tracked_bills else ''
+    pos_icon    = f" · 🏷 {note['position']}" if note.get('position') else ''
+    prio_icon   = f" · 🔥 {note['priority']}" if note.get('priority') else ''
+
+    disp_bill_number = row.get('bill_number', bill_id)
+    title_line = (
+        f"{tracked_icon}**{disp_bill_number}** — {row.get('title', 'No title')}  "
+        f"· {jur_icon} {jur_name} · 📋 {status_lbl}{pos_icon}{prio_icon}"
+    )
+
+    with st.expander(title_line):
+        # ── Info columns ────────────────────────────────────────────────────
+        info1, info2 = st.columns(2)
+        with info1:
+            st.write(f"**Jurisdiction:** {jur_level} — {jur_name}")
+            st.write(f"**Status:** {status_lbl} [{status}]")
+            st.write(f"**Status Date:** {row.get('status_date', '—')}")
+            st.write(f"**Session:** {row.get('session', '—')}")
+        with info2:
+            sponsors = row.get('sponsors', row.get('sponsor_names', '—'))
+            committees = row.get('committees', row.get('committee', '—'))
+            st.write(f"**Sponsor(s):** {sponsors}")
+            st.write(f"**Committee(s):** {committees}")
+            if kw_tags:
+                badges = ' '.join([f'`{t}`' for t in kw_tags])
+                st.write(f"**Keyword Tags:** {badges}")
+            if row.get('url'):
+                st.markdown(f"[📄 Bill Text & History]({row['url']})")
+
+        # ── Summary / Last Action ────────────────────────────────────────────
+        desc = row.get('description', '')
+        if desc:
+            st.write(f"**Summary:** {desc}")
+        last_action = row.get('last_action', '')
+        last_action_date = row.get('last_action_date', '')
+        if last_action or last_action_date:
+            st.write(f"**Last Action:** {last_action} ({last_action_date})")
+        subjects = row.get('subjects', '')
+        if subjects:
+            st.write(f"**Subjects:** {subjects}")
+        if note.get("last_reviewed"):
+            try:
+                _lr_dt = datetime.fromisoformat(note["last_reviewed"]).strftime("%Y-%m-%d %H:%M")
+                st.caption(f"Last reviewed: {_lr_dt}")
+            except:
+                pass
+
+        st.divider()
+
+        # ── Notes & annotations ─────────────────────────────────────────────
+        nc1, nc2 = st.columns(2)
+        with nc1:
+            new_comment = st.text_area(
+                "💬 Notes / Comments",
+                value=note.get("comment", ""),
+                key=f"{key_prefix}_comment"
+            )
+            new_links = st.text_input(
+                "🔗 Related Links (comma-separated)",
+                value=", ".join(note.get("links", [])),
+                key=f"{key_prefix}_links"
+            )
+        with nc2:
+            position = st.selectbox(
+                "🏷 Position", ["", "Support", "Oppose", "Watch", "Neutral", "No Position"],
+                index=["", "Support", "Oppose", "Watch", "Neutral", "No Position"].index(note.get("position", "")),
+                key=f"{key_prefix}_pos"
+            )
+            priority = st.selectbox(
+                "🔥 Priority", ["", "High", "Medium", "Low"],
+                index=["", "High", "Medium", "Low"].index(note.get("priority", "")),
+                key=f"{key_prefix}_prio"
+            )
+        uploaded_file = st.file_uploader("📎 Attach PDF", type=["pdf"], key=f"{key_prefix}_upload")
+
+        # ── Action buttons ──────────────────────────────────────────────────
+        ba1, ba2, ba3 = st.columns(3)
+        with ba1:
+            if st.button("💾 Save Notes", key=f"{key_prefix}_save"):
+                try:
+                    note["comment"]  = new_comment
+                    note["links"]    = [x.strip() for x in new_links.split(",") if x.strip()]
+                    note["position"] = position
+                    note["priority"] = priority
+                    note["last_reviewed"] = datetime.utcnow().isoformat()
+                    if uploaded_file:
+                        fp = os.path.join(UPLOAD_DIR, f"{bill_id}_{uploaded_file.name}")
+                        with open(fp, "wb") as fh:
+                            fh.write(uploaded_file.getbuffer())
+                        note.setdefault("files", []).append(fp)
+                    bill_notes[bill_id] = note
+                    if save_notes(bill_notes):
+                        st.success(f"✅ Notes saved for {bill_id}")
+                    else:
+                        st.error("Failed to save notes")
+                except Exception as e:
+                    st.error(f"Error saving notes: {e}")
+                    logger.error(f"Error saving notes for {bill_id}: {e}")
+
+        with ba2:
+            if bill_id not in tracked_bills:
+                if st.button("➕ Track This Bill", key=f"{key_prefix}_track"):
+                    try:
+                        tracked_bills.append(bill_id)
+                        if save_tracked(tracked_bills):
+                            st.success(f"✅ Now tracking {bill_id}")
+                            st.rerun()
+                        else:
+                            st.error("Failed to track bill")
+                    except Exception as e:
+                        st.error(f"Error tracking bill: {e}")
+            else:
+                if st.button("❌ Untrack", key=f"{key_prefix}_untrack"):
+                    try:
+                        tracked_bills.remove(bill_id)
+                        if save_tracked(tracked_bills):
+                            st.success(f"Untracked {bill_id}")
+                            st.rerun()
+                        else:
+                            st.error("Failed to untrack bill")
+                    except Exception as e:
+                        st.error(f"Error untracking bill: {e}")
+
+        with ba3:
+            if row.get('url'):
+                st.markdown(f"[🔗 Open on LegiScan]({row['url']})")
+
+    return note
+
+
+# ─── Load application data ────────────────────────────────────────────────────
 try:
     keywords_list = load_keywords()
-    tracked_bills  = load_tracked()
-    bill_notes     = load_notes()
-    df             = load_data()
+    tracked_bills = load_tracked()
+    bill_notes    = load_notes()
+    df            = load_data()   # Layer B: keyword-match CSV
+    saved_views   = load_saved_views()
 except Exception as e:
     st.error(f"Critical error loading application data: {e}")
     st.stop()
 
-# Initialize the working copy
-filtered_df = df.copy()
+# ── Initialize CorpusManager ──────────────────────────────────────────────────
+# Legacy compatibility: corpus is None when corpus_manager.py is absent or DB fails.
+corpus = None
+if _CORPUS_AVAILABLE:
+    try:
+        corpus = _CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
+    except Exception as _ce:
+        logger.warning(f"CorpusManager init failed (non-fatal): {_ce}")
 
-# ─── Sidebar controls ───
-st.sidebar.title("SCCA Bill Tracker")
-st.sidebar.header("Controls")
 
-# NEW: State and Federal Legislation Selectors
-st.sidebar.subheader("🏛️ Jurisdiction Filters")
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# UNIFIED SIDEBAR COMMAND CENTER 
+# ═══════════════════════════════════════════════════════════════════════════════
+st.sidebar.title("🏛️ SCCA Bill Tracker")
 
-# Jurisdiction Level Selector
-jurisdiction_levels = st.sidebar.multiselect(
-    "Jurisdiction Level",
-    options=["Federal", "State", "Unknown"],
-    default=["Federal", "State", "Unknown"],
-    help="Filter by federal vs state legislation"
+# ── A. SEARCH & MODE (Always Visible) ─────────────────────────────────────────
+global_search = st.sidebar.text_input(
+    "🔍 Global Search",
+    value=st.session_state.get("global_search", ""),
+    placeholder="bill number, title, sponsor...",
+    key="global_search_input"
 )
+st.session_state.global_search = global_search
 
-# State Selector (only show if State is selected in jurisdiction levels)
-selected_states = []
-if "State" in jurisdiction_levels:
-    # Get available states from data
-    available_states = []
-    if not df.empty and 'jurisdiction_name' in df.columns:
-        state_bills = df[df['jurisdiction_level'] == 'State']
-        available_states = sorted(state_bills['jurisdiction_name'].dropna().unique())
-    
-    if not available_states:
-        available_states = list(US_STATES.values())
-        
-    selected_states = st.sidebar.multiselect(
-        "🗺️ Select States",
-        options=available_states,
-        default=available_states if not df.empty else [],
-        help="Select specific states to include"
-    )
-
-# Federal Legislature Selector (only show if Federal is selected)
-selected_federal_types = []
-if "Federal" in jurisdiction_levels:
-    # Get available federal types from data
-    available_federal = []
-    if not df.empty and 'jurisdiction_name' in df.columns:
-        federal_bills = df[df['jurisdiction_level'] == 'Federal']
-        available_federal = sorted(federal_bills['jurisdiction_name'].dropna().unique())
-    
-    # If no specific federal data, use default options
-    if not available_federal:
-        available_federal = list(FEDERAL_TYPES.values())
-    
-    selected_federal_types = st.sidebar.multiselect(
-        "🏛️ Federal Legislature",
-        options=available_federal,
-        default=available_federal if not df.empty else [],
-        help="Select House, Senate, or both"
-    )
-
-# Show current jurisdiction summary
-with st.sidebar.expander("📊 Current Jurisdiction Summary"):
-    if not df.empty and 'jurisdiction_level' in df.columns:
-        summary = df['jurisdiction_level'].value_counts()
-        for level, count in summary.items():
-            st.write(f"• {level}: {count} bills")
-    else:
-        st.write("No jurisdiction data available")
+app_mode = st.sidebar.radio(
+    "View Mode",
+    ["🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills"],
+    key="app_mode"
+)
 
 st.sidebar.divider()
 
-# ←– RESCAN BUTTON
-if st.sidebar.button("🔄 Rescan"):
-    if not selected_states and not selected_federal_types:
-        st.sidebar.warning("Please select at least one jurisdiction.")
+# ── B. SAVED VIEWS ────────────────────────────────────────────────────────────
+st.sidebar.subheader("💾 Saved Views")
+BUILTIN_VIEWS = {
+    "📋 Tracked — All":            {"app_mode": "⭐ Tracked Bills", "global_sort": "Most Recent Action", "tracked_quick": "All Tracked"},
+    "🚨 Tracked — Needs Attention": {"app_mode": "⭐ Tracked Bills", "global_sort": "Priority (High First)", "tracked_quick": "Needs Attention"},
+    "📝 Tracked — Needs Notes":    {"app_mode": "⭐ Tracked Bills", "global_sort": "Priority (High First)", "tracked_quick": "No Notes"},
+    "🔥 Tracked — High Priority":  {"app_mode": "⭐ Tracked Bills", "global_sort": "Last Reviewed (Newest)", "tracked_quick": "High Priority"},
+    "🏷️ Keyword — Recent Action":  {"app_mode": "🏷️ Keyword Matches", "global_sort": "Most Recent Action"},
+    "🏛️ CA Bills — Recent":        {"app_mode": "🔍 All Bills", "global_jur": ["California"], "global_sort": "Most Recent Action"},
+    "🇺🇸 Federal Bills — Recent":  {"app_mode": "🔍 All Bills", "global_jur": ["U.S. Congress"], "global_sort": "Most Recent Action"},
+}
+
+_av = st.session_state.active_view_name
+if _av:
+    st.sidebar.caption(f"Active: **{_av}**")
+
+_view_tabs1, _view_tabs2 = st.sidebar.tabs(["Presets", "My Views"])
+with _view_tabs1:
+    _sel_builtin = st.selectbox("Select Preset", list(BUILTIN_VIEWS.keys()), key="sel_builtin")
+    if st.button("Load Preset", key="load_builtin_btn"):
+        st.session_state.active_view_name = _sel_builtin
+        for k, v in BUILTIN_VIEWS[_sel_builtin].items():
+            st.session_state[k] = v
+        st.rerun()
+
+with _view_tabs2:
+    if not saved_views:
+        st.caption("No custom saved views.")
     else:
-        with st.spinner("Rescanning bills…"):
-            try:
-                # Map jurisdiction names to API codes
-                STATE_NAME_TO_CODE = {v: k for k, v in US_STATES.items()}
-                api_states = [STATE_NAME_TO_CODE.get(s, s) for s in selected_states]
-                if selected_federal_types:
-                    api_states.append("US")
-                api_states = list(set(api_states))
-                
-                stats = run_scan(states=api_states, data_dir=DATA_DIR)
-                sync_with_remote()
-                load_data.clear()
-                st.session_state.scan_stats = stats
-                if hasattr(st, 'rerun'):
+        _sel_custom = st.selectbox("Select View", list(saved_views.keys()), key="sel_custom_view")
+        _cvcol1, _cvcol2 = st.columns(2)
+        with _cvcol1:
+            if st.button("Load View", key="load_custom_btn"):
+                st.session_state.active_view_name = _sel_custom
+                for k, v in saved_views[_sel_custom].items():
+                    if k != "saved_at":
+                        st.session_state[k] = v
+                st.rerun()
+        with _cvcol2:
+            if st.button("Delete Context", key="del_custom_btn"):
+                del saved_views[_sel_custom]
+                if save_saved_views(saved_views):
+                    if st.session_state.active_view_name == _sel_custom:
+                        st.session_state.active_view_name = None
+                    st.success("Deleted!")
                     st.rerun()
-                else:
-                    st.experimental_rerun()
-            except Exception as e:
-                st.sidebar.error(f"Rescan failed: {e}")
-                logger.error(f"Error during rescan: {e}")
+    st.divider()
+    _new_v_name = st.text_input("Name current state:")
+    if st.button("Save Current View", key="save_custom_btn"):
+        if _new_v_name:
+            cv = {
+                "app_mode": st.session_state.app_mode,
+                "global_search": st.session_state.global_search,
+                "global_jur": st.session_state.get("global_jur", []),
+                "global_status": st.session_state.get("global_status", []),
+                "global_sponsors": st.session_state.get("global_sponsors", []),
+                "global_committees": st.session_state.get("global_committees", []),
+                "global_date_range": st.session_state.get("global_date_range", []),
+                "kw_filter": st.session_state.get("kw_filter", []),
+                "tracked_pos": st.session_state.get("tracked_pos", []),
+                "tracked_prio": st.session_state.get("tracked_prio", []),
+                "tracked_quick": st.session_state.get("tracked_quick", "All Tracked"),
+                "global_sort": st.session_state.get("global_sort", "Most Recent Action"),
+                "saved_at": datetime.utcnow().isoformat()
+            }
+            saved_views[_new_v_name] = cv
+            if save_saved_views(saved_views):
+                st.session_state.active_view_name = _new_v_name
+                st.success("Saved view!")
+                st.rerun()
 
-if "scan_stats" in st.session_state:
-    stats = st.session_state.scan_stats
-    st.sidebar.markdown("### Last Scan Stats")
-    if stats.get("api_status") == "error":
-        st.sidebar.error("API error encountered during scan")
-    else:
-        st.sidebar.success("API connection successful")
-    
-    st.sidebar.info(
-        f"**Total Found:** {stats.get('total_found', 0)}\n\n"
-        f"**Filtered:** {stats.get('filtered', 0)}\n\n"
-        f"**New Bills:** {stats.get('new_bills', 0)}\n\n"
-        f"**Updated Status:** {stats.get('changed_status', 0)}"
-    )
-    if st.sidebar.button("Dismiss Stats"):
-        del st.session_state.scan_stats
-        if hasattr(st, 'rerun'):
-            st.rerun()
-        else:
-            st.experimental_rerun()
+st.sidebar.divider()
 
-# Main content
-if df.empty:
-    st.warning("No data found. Please run a rescan to populate.")
+# ── C. PRIMARY FILTERS ────────────────────────────────────────────────────────
+st.sidebar.subheader("🎯 Primary Filters")
 
-st.title("🏛️ SCCA Bill Tracker")
+# Gather global options from df and corpus where applicable
+_all_jur_opts = ["California", "U.S. Congress"]
+_all_status_opts = []
+_all_sponsors = []
+_all_committees = []
+if corpus:
+    _all_status_opts = get_corpus_status_options(corpus)
+if not df.empty:
+    _csv_stats = df["status_stage"].dropna().astype(str).unique().tolist() if "status_stage" in df.columns else []
+    for s in _csv_stats:
+        if s not in _all_status_opts:
+            _all_status_opts.append(s)
+    _all_status_opts = sorted(_all_status_opts)
+    if "sponsors" in df.columns:
+        _all_sponsors = sorted(df["sponsors"].dropna().unique())
+    if "committees" in df.columns:
+        _all_committees = sorted(df["committees"].dropna().unique())
 
-# Dashboard Summary
-create_summary_dashboard(df, tracked_bills, bill_notes)
-
-st.divider()
-
-# Search functionality
-st.subheader("🔍 Search Bills")
-search_term = st.text_input("Search by bill number, title, sponsor, description, or committee:", 
-                           placeholder="e.g. AB-123, climate change, John Smith")
-
-# Apply search filter
-if search_term:
-    df = search_bills(df, search_term)
-    st.info(f"Found {len(df)} bills matching '{search_term}'")
-
-# Sidebar filters
-st.sidebar.title("🔍 Filter Options")
-
-# Add option to show all tracked bills regardless of other filters
-show_all_tracked = st.sidebar.checkbox("Show All Tracked Bills (ignore filters)", value=False)
-
-
-# Rest of existing filters
-keywords = st.sidebar.multiselect(
-    "Keyword Category", 
-    sorted(df["keyword"].dropna().unique()) if not df.empty and "keyword" in df.columns else keywords_list,
-    default=sorted(df["keyword"].dropna().unique()) if not df.empty and "keyword" in df.columns else []
-)
-    
-
-# UI: Add New Keyword
-with st.sidebar.expander("➕ Add Custom Keyword Category"):
-    new_keyword = st.text_input("New Keyword")
-    if st.button("Add Keyword"):
-        if new_keyword and new_keyword not in keywords_list:
-            keywords_list.append(new_keyword)
-            if save_keywords(keywords_list):
-                st.success(f"Added new keyword: {new_keyword}")
-                if hasattr(st, 'rerun'):
-                    st.rerun()
-                else:
-                    st.experimental_rerun()
-
-# Initialize session state only once
-if "status_options" not in st.session_state:
-    all_status_stages_raw = sorted(df["status_stage"].dropna().astype(str).unique()) if not df.empty and "status_stage" in df.columns else []
-    st.session_state.status_options = all_status_stages_raw
+if st.session_state.status_options is None or len(st.session_state.status_options) < len(_all_status_opts):
+    st.session_state.status_options = list(_all_status_opts)
     regenerate_friendly_status_options()
 
-# UI: Add New Status
-with st.sidebar.expander("➕ Add Custom Status Code"):
-    new_status_code = st.text_input("Status Code (number)")
-    new_status_label = st.text_input("Status Label")
-    if st.button("Add Status"):
-        if new_status_code and new_status_code not in st.session_state.status_options:
-            st.session_state.status_options.append(new_status_code)
-            STATUS_LEGEND[new_status_code] = new_status_label or new_status_code
+global_jur = st.sidebar.multiselect(
+    "Jurisdiction",
+    options=_all_jur_opts,
+    default=st.session_state.get("global_jur", []),
+    key="global_jur_input"
+)
+st.session_state.global_jur = global_jur
+
+_f_opts = [f"{STATUS_LEGEND.get(s, s)} [{s}]" for s in st.session_state.status_options]
+_f2c    = {f"{STATUS_LEGEND.get(s, s)} [{s}]": s for s in st.session_state.status_options}
+_stat_sel = st.sidebar.multiselect(
+    "Status Stage",
+    options=_f_opts,
+    default=st.session_state.get("global_status_friendly", []),
+    key="global_status_friendly"
+)
+st.session_state.global_status = [_f2c[f] for f in _stat_sel]
+
+global_date_range = st.sidebar.date_input(
+    "Status Date Range",
+    value=st.session_state.get("global_date_range", []),
+    key="global_date_range_input"
+)
+st.session_state.global_date_range = global_date_range
+
+global_sponsors = st.sidebar.multiselect(
+    "Sponsors",
+    options=_all_sponsors,
+    default=st.session_state.get("global_sponsors", []),
+    key="global_sponsors_input"
+)
+st.session_state.global_sponsors = global_sponsors
+
+global_committees = st.sidebar.multiselect(
+    "Committees",
+    options=_all_committees,
+    default=st.session_state.get("global_committees", []),
+    key="global_committees_input"
+)
+st.session_state.global_committees = global_committees
+
+st.sidebar.divider()
+
+# ── D. ADVANCED FILTERS (Expander) ───────────────────────────────────────────
+with st.sidebar.expander("🛠️ Advanced Filters"):
+    _avail_kw = sorted(df["keyword"].dropna().unique()) if not df.empty and "keyword" in df.columns else keywords_list
+    kw_filter = st.multiselect(
+        "Keyword Meta-Tags",
+        options=_avail_kw,
+        default=st.session_state.get("kw_filter", []),
+        key="kw_filter_input"
+    )
+    st.session_state.kw_filter = kw_filter
+
+    tracked_pos = st.multiselect(
+        "Annotation Position",
+        ["Support", "Oppose", "Watch", "Neutral", "No Position"],
+        default=st.session_state.get("tracked_pos", []),
+        key="tracked_pos_input"
+    )
+    st.session_state.tracked_pos = tracked_pos
+
+    tracked_prio = st.multiselect(
+        "Annotation Priority",
+        ["High", "Medium", "Low"],
+        default=st.session_state.get("tracked_prio", []),
+        key="tracked_prio_input"
+    )
+    st.session_state.tracked_prio = tracked_prio
+
+    st.write("---")
+    _ns_code  = st.text_input("New Custom Status Code", key="new_status_code")
+    _ns_label = st.text_input("New Status Label",       key="new_status_label")
+    if st.button("Add Status", key="add_status_btn"):
+        if _ns_code and _ns_code not in st.session_state.status_options:
+            st.session_state.status_options.append(_ns_code)
+            STATUS_LEGEND[_ns_code] = _ns_label or _ns_code
             regenerate_friendly_status_options()
-            st.success(f"Added new status {new_status_code}: {new_status_label}")
+            st.success(f"Added status {_ns_code}: {_ns_label}")
+            st.rerun()
 
-    friendly_status_options = [f"{STATUS_LEGEND.get(s, s)} [{s}]" for s in st.session_state.status_options]
-    friendly_to_code = {f"{STATUS_LEGEND.get(s, s)} [{s}]": s for s in st.session_state.status_options}
+# ── E. MODE-SPECIFIC OVERLAYS ──────────────────────────────────────────────────
+if "⭐ Tracked Bills" in app_mode:
+    st.sidebar.divider()
+    st.sidebar.caption("**Tracked Bills Quick-Filters**")
+    tracked_quick = st.sidebar.radio(
+        "Status Flag",
+        ["All Tracked", "Needs Attention", "Has Notes", "No Notes", "High Priority", "Recently Updated"],
+        index=["All Tracked", "Needs Attention", "Has Notes", "No Notes", "High Priority", "Recently Updated"].index(st.session_state.get("tracked_quick", "All Tracked")),
+        key="tracked_quick_input"
+    )
+    st.session_state.tracked_quick = tracked_quick
 
-selected_statuses_friendly = st.sidebar.multiselect(
-    "Status Stage",
-    options=friendly_status_options,
-    default=friendly_status_options,
-    key="status_stage_select_friendly"
-)
-
-# Convert selection back to code strings
-status_stage = [friendly_to_code[f] for f in selected_statuses_friendly]
-# Optional: Add a visible legend below the sidebar filters
-with st.sidebar.expander("📘 Status Code Legend"):
-    for code, label in STATUS_LEGEND.items():
-        st.write(f"**{code}** — {label}")
-# ─── 2) Persist status options in session_state ───
-if "status_options" not in st.session_state:
-    # store everything as strings so custom entries fit in cleanly
-    st.session_state.status_options = [str(s) for s in all_status_stages_raw]
-
-# ─── 3) Use that session_state list for your multiselect ───
-status_stage = st.sidebar.multiselect(
-    "Status Stage",
-    options=st.session_state.status_options,
-    default=st.session_state.status_options,
-    key="status_stage_select"
-)
-
-# ─── 4) Allow adding custom statuses ───
-st.sidebar.subheader("Add Custom Status")
-custom_status = st.sidebar.text_input(
-    "Enter custom status names (comma-separated)",
-    placeholder="e.g., 2, 3, 4",
-    key="custom_status_input"
-)
-if st.sidebar.button("Add Custom Statuses", key="add_custom_status_button"):
-    new_statuses = [s.strip() for s in custom_status.split(",") if s.strip()]
-    for s in new_statuses:
-        if s not in st.session_state.status_options:
-            st.session_state.status_options.append(s)
-    st.rerun()
-
-# ─── (Optional) Show current selections ───
-with st.sidebar.expander("Current Status Filters"):
-    for s in status_stage:
-        st.write(f"• {s}")
-
-# ─── (Optional) Reset back to defaults ───
-if st.sidebar.button("Reset Status Filters", key="reset_status_filters"):
-    st.session_state.status_options = [str(s) for s in all_status_stages_raw]
-    st.rerun()
-
-# These need to be at the same indentation level as the other filters above
-sponsors = st.sidebar.multiselect("Sponsors", 
-                                 sorted(df["sponsors"].dropna().unique()) if "sponsors" in df.columns else [])
-committees = st.sidebar.multiselect("Committees", 
-                                   sorted(df["committees"].dropna().unique()) if "committees" in df.columns else [])
-position_filter = st.sidebar.multiselect("Position", ["Support", "Oppose", "Watch"])
-priority_filter = st.sidebar.multiselect("Priority", ["High", "Medium", "Low"])
-date_range = st.sidebar.date_input("Introduced Date Range", [])
-
-# Apply filters (but not to tracked bills if show_all_tracked is enabled)
-filtered_df = df.copy()
-
-if not show_all_tracked:
-    # Apply jurisdiction filters
-    if jurisdiction_levels and 'jurisdiction_level' in df.columns:
-        filtered_df = filtered_df[filtered_df["jurisdiction_level"].isin(jurisdiction_levels)]
-    
-    # Apply state-specific filters
-    if "State" in jurisdiction_levels and selected_states and 'jurisdiction_name' in df.columns:
-        state_mask = (filtered_df['jurisdiction_level'] == 'State') & (filtered_df['jurisdiction_name'].isin(selected_states))
-        non_state_mask = filtered_df['jurisdiction_level'] != 'State'
-        filtered_df = filtered_df[state_mask | non_state_mask]
-    
-    # Apply federal-specific filters
-    if "Federal" in jurisdiction_levels and selected_federal_types and 'jurisdiction_name' in df.columns:
-        federal_mask = (filtered_df['jurisdiction_level'] == 'Federal') & (filtered_df['jurisdiction_name'].isin(selected_federal_types))
-        non_federal_mask = filtered_df['jurisdiction_level'] != 'Federal'
-        filtered_df = filtered_df[federal_mask | non_federal_mask]
-        
-        # Apply other existing filters
-        if keywords and "keyword" in df.columns:
-            filtered_df = filtered_df[filtered_df["keyword"].isin(keywords)]
-        if status_stage and "status_stage" in df.columns:
-            filtered_df = filtered_df[
-            filtered_df["status_stage"]
-                   .astype(str)
-                   .isin(status_stage)
-    ]
-        if sponsors and "sponsors" in df.columns:
-            filtered_df = filtered_df[filtered_df["sponsors"].isin(sponsors)]
-        if committees and "committees" in df.columns:
-            filtered_df = filtered_df[filtered_df["committees"].isin(committees)]
-        if position_filter:
-            filtered_df = filtered_df[filtered_df["bill_number"].apply(lambda x: bill_notes.get(x, {}).get("position", "") in position_filter)]
-        if priority_filter:
-            filtered_df = filtered_df[filtered_df["bill_number"].apply(lambda x: bill_notes.get(x, {}).get("priority", "") in priority_filter)]
-        if len(date_range) == 2 and "introduced_date" in df.columns:
-            start, end = date_range
-            filtered_df["introduced_date"] = pd.to_datetime(filtered_df["introduced_date"], errors='coerce')
-            filtered_df = filtered_df[
-                (filtered_df["introduced_date"] >= pd.to_datetime(start)) &
-                (filtered_df["introduced_date"] <= pd.to_datetime(end))
-            ]
-    else:
-        # If showing all tracked bills, only apply search filter
-        pass
-
-tab1, tab2 = st.tabs(["📋 All Bills", "⭐ Tracked Bills"])
-
-with tab1:
-    st.subheader(f"All Bills ({len(filtered_df)} found)")
-    
-    if filtered_df.empty:
-        st.info("No bills match your current filters.")
-    else:
-        for _, row in filtered_df.iterrows():
-            bill_id = row.get('bill_number', 'Unknown')
-            note = bill_notes.get(bill_id, {
-                "comment": "", "links": [], "files": [],
-                "position": "", "priority": ""
-            })
-
-            tags = []
-            if note.get("position"):
-                tags.append(f"🏷 {note['position']}")
-            if note.get("priority"):
-                tags.append(f"🔥 {note['priority']}")
-            
-            # Add jurisdiction info to tags
-            jurisdiction_level = row.get('jurisdiction_level', 'Unknown')
-            jurisdiction_name = row.get('jurisdiction_name', 'Unknown')
-            if jurisdiction_level == 'Federal':
-                tags.append(f"🏛️ Federal")
-            elif jurisdiction_level == 'State':
-                tags.append(f"🗺️ {jurisdiction_name}")
-            
-            tagline = " | ".join(tags)
-
-            with st.expander(f"{bill_id}: {row.get('title', 'No title')} ({tagline})"):
-                st.write(f"**Jurisdiction:** {jurisdiction_level} - {jurisdiction_name}")
-                st.write(f"**Status Stage:** {row.get('status_stage', 'Unknown')}")
-                st.write(f"**Sponsor(s):** {row.get('sponsors', 'Unknown')}")
-                st.write(f"**Committee(s):** {row.get('committees', 'Unknown')}")
-                st.write(f"**Summary:** {row.get('description', 'No description available')}")
-                st.write(f"**Last Action:** {row.get('last_action', 'Unknown')} ({row.get('last_action_date', 'Unknown')})")
-                if row.get('url'):
-                    st.markdown(f"[📄 Full Text and History]({row['url']})")
-
-                new_comment = st.text_area("💬 Notes/Comments", value=note.get("comment", ""), key=f"{bill_id}_comment")
-                new_links = st.text_input("🔗 Related Links (comma-separated)", value=", ".join(note.get("links", [])), key=f"{bill_id}_links")
-                position = st.selectbox("🏷 Position", ["", "Support", "Oppose", "Watch"], index=["", "Support", "Oppose", "Watch"].index(note.get("position", "")), key=f"{bill_id}_pos")
-                priority = st.selectbox("🔥 Priority", ["", "High", "Medium", "Low"], index=["", "High", "Medium", "Low"].index(note.get("priority", "")), key=f"{bill_id}_prio")
-                uploaded_file = st.file_uploader("📎 Upload PDF", type=["pdf"], key=f"{bill_id}_upload")
-
-                if st.button(f"💾 Save Notes for {bill_id}", key=f"{bill_id}_save"):
-                    try:
-                        note["comment"] = new_comment
-                        note["links"] = [x.strip() for x in new_links.split(",") if x.strip()]
-                        note["position"] = position
-                        note["priority"] = priority
-                        if uploaded_file:
-                            file_path = os.path.join(UPLOAD_DIR, f"{bill_id}_{uploaded_file.name}")
-                            with open(file_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
-                            note.setdefault("files", []).append(file_path)
-                        bill_notes[bill_id] = note
-                        if save_notes(bill_notes):
-                            sync_with_remote()
-                            st.success(f"Saved notes for {bill_id}")
-                        else:
-                            st.error(f"Failed to save notes for {bill_id}")
-                    except Exception as e:
-                        st.error(f"Error saving notes: {e}")
-                        logger.error(f"Error saving notes for {bill_id}: {e}")
-
-                if bill_id not in tracked_bills:
-                    if st.button(f"➕ Track {bill_id}", key=bill_id):
-                        try:
-                            tracked_bills.append(bill_id)
-                            if save_tracked(tracked_bills):
-                                sync_with_remote()
-                                st.success(f"Now tracking {bill_id}")
-                                st.rerun()
-                            else:
-                                st.error(f"Failed to track {bill_id}")
-                        except Exception as e:
-                            st.error(f"Error tracking bill: {e}")
-                            logger.error(f"Error tracking {bill_id}: {e}")
-                else:
-                    st.markdown("✅ Currently Tracked")
-
-with tab2:
-    st.subheader("Tracked Bills")
-    if tracked_bills:
-        # For tracked bills, show all tracked bills if option is selected, otherwise apply filters
-        if show_all_tracked:
-            # Show all tracked bills regardless of other filters
-            tracked_df = df[df["bill_number"].isin(tracked_bills)] if not df.empty else pd.DataFrame()
-            st.info("Showing all tracked bills (filters ignored)")
+# ── F. ADMIN / DATA TOOLS (Expander) ──────────────────────────────────────────
+st.sidebar.divider()
+with st.sidebar.expander("⚙️ Admin & Database Tools"):
+    st.header("🔄 Keyword Rescan")
+    _rescan_states = st.multiselect(
+        "States", options=sorted(US_STATES.values()),
+        default=["California"], key="rescan_states"
+    )
+    _rescan_federal = st.checkbox("Include Federal", value=True, key="rescan_federal")
+    if st.button("▶️ Run Keyword Rescan", key="run_rescan"):
+        if not _rescan_states and not _rescan_federal:
+            st.warning("Select at least one jurisdiction.")
         else:
-            # Apply filters to tracked bills
-            tracked_df = filtered_df[filtered_df["bill_number"].isin(tracked_bills)] if not filtered_df.empty else pd.DataFrame()
-        
-        st.write(f"**Tracked Bills Found:** {len(tracked_df)} of {len(tracked_bills)} total tracked bills")
-        
-        # Show which tracked bills are missing from current data
-        if not df.empty:
-            missing_bills = [bill for bill in tracked_bills if bill not in df["bill_number"].values]
-            if missing_bills:
-                with st.expander(f"⚠️ {len(missing_bills)} tracked bills not found in current data"):
-                    st.write("These bills may have different status stages or may not be in the current dataset:")
-                    for bill in missing_bills:
-                        note = bill_notes.get(bill, {})
-                        st.write(f"- **{bill}**: {note.get('comment', 'No notes')}")
-        
-        if tracked_df.empty and tracked_bills:
-            st.warning("No tracked bills match your current filters. Try:")
-            st.write("- Check the 'Show All Tracked Bills' option above")
-            st.write("- Add custom status stages if your bills have different statuses")
-            st.write("- Clear some filters to see more results")
-        elif not tracked_df.empty:
-            for _, row in tracked_df.iterrows():
-                bill_id = row.get('bill_number', 'Unknown')
-                note = bill_notes.get(bill_id, {
-                    "comment": "", "links": [], "files": [],
-                    "position": "", "priority": ""
-                })
-
-                tags = []
-                if note.get("position"):
-                    tags.append(f"🏷 {note['position']}")
-                if note.get("priority"):
-                    tags.append(f"🔥 {note['priority']}")
-                
-                # Add jurisdiction info to tags
-                jurisdiction_level = row.get('jurisdiction_level', 'Unknown')
-                jurisdiction_name = row.get('jurisdiction_name', 'Unknown')
-                if jurisdiction_level == 'Federal':
-                    tags.append(f"🏛️ Federal")
-                elif jurisdiction_level == 'State':
-                    tags.append(f"🗺️ {jurisdiction_name}")
-                
-                tagline = " | ".join(tags)
-
-                with st.expander(f"{bill_id}: {row.get('title', 'No title')} ({tagline})"):
-                    st.write(f"**Jurisdiction:** {jurisdiction_level} - {jurisdiction_name}")
-                    st.write(f"**Status Stage:** {row.get('status_stage', 'Unknown')}")
-                    st.write(f"**Sponsor(s):** {row.get('sponsors', 'Unknown')}")
-                    st.write(f"**Committee(s):** {row.get('committees', 'Unknown')}")
-                    st.write(f"**Summary:** {row.get('description', 'No description available')}")
-                    st.write(f"**Last Action:** {row.get('last_action', 'Unknown')} ({row.get('last_action_date', 'Unknown')})")
-                    if row.get('url'):
-                        st.markdown(f"[📄 Full Text and History]({row['url']})")
-
-                    new_comment = st.text_area("💬 Notes/Comments", value=note.get("comment", ""), key=f"{bill_id}_t_comment")
-                    new_links = st.text_input("🔗 Related Links (comma-separated)", value=", ".join(note.get("links", [])), key=f"{bill_id}_t_links")
-                    position = st.selectbox("🏷 Position", ["", "Support", "Oppose", "Watch"], index=["", "Support", "Oppose", "Watch"].index(note.get("position", "")), key=f"{bill_id}_t_pos")
-                    priority = st.selectbox("🔥 Priority", ["", "High", "Medium", "Low"], index=["", "High", "Medium", "Low"].index(note.get("priority", "")), key=f"{bill_id}_t_prio")
-                    uploaded_file = st.file_uploader("📎 Upload PDF", type=["pdf"], key=f"{bill_id}_t_upload")
-
-                    if st.button(f"💾 Save Notes for {bill_id}", key=f"{bill_id}_t_save"):
-                        try:
-                            note["comment"] = new_comment
-                            note["links"] = [x.strip() for x in new_links.split(",") if x.strip()]
-                            note["position"] = position
-                            note["priority"] = priority
-                            if uploaded_file:
-                                file_path = os.path.join(UPLOAD_DIR, f"{bill_id}_{uploaded_file.name}")
-                                with open(file_path, "wb") as f:
-                                    f.write(uploaded_file.getbuffer())
-                                note.setdefault("files", []).append(file_path)
-                            bill_notes[bill_id] = note
-                            if save_notes(bill_notes):
-                                sync_with_remote()
-                                st.success(f"Saved notes for {bill_id}")
-                            else:
-                                st.error(f"Failed to save notes for {bill_id}")
-                        except Exception as e:
-                            st.error(f"Error saving notes: {e}")
-                            logger.error(f"Error saving notes for {bill_id}: {e}")
-
-        # Export functionality
-        if tracked_bills:
-            try:
-                # For export, use all tracked bills data regardless of filters
-                export_df = df[df["bill_number"].isin(tracked_bills)].copy() if not df.empty else pd.DataFrame()
-                if not export_df.empty:
-                    export_df["comments"] = export_df["bill_number"].apply(lambda x: bill_notes.get(x, {}).get("comment", ""))
-                    export_df["links"] = export_df["bill_number"].apply(lambda x: ", ".join(bill_notes.get(x, {}).get("links", [])))
-                    export_df["files"] = export_df["bill_number"].apply(lambda x: "; ".join(os.path.basename(f) for f in bill_notes.get(x, {}).get("files", [])))
-                    export_df["position"] = export_df["bill_number"].apply(lambda x: bill_notes.get(x, {}).get("position", ""))
-                    export_df["priority"] = export_df["bill_number"].apply(lambda x: bill_notes.get(x, {}).get("priority", ""))
-
-                    st.download_button("📥 Export Tracked Bills with Notes to CSV", 
-                                     data=export_df.to_csv(index=False), 
-                                     file_name="Tracked_Bills_Export.csv", 
-                                     mime="text/csv")
-                else:
-                    st.info("No tracked bill data available for export. Bills may need to be rescanned.")
-            except Exception as e:
-                st.error(f"Error preparing export: {e}")
-                logger.error(f"Error preparing export: {e}")
-
-        # Remove tracked bills
-        if tracked_bills:
-            to_remove = st.multiselect("Remove from Tracked List", tracked_bills)
-            if st.button("Remove Selected") and to_remove:
+            with st.spinner("Scanning bills by keyword…"):
                 try:
-                    tracked_bills = [b for b in tracked_bills if b not in to_remove]
-                    if save_tracked(tracked_bills):
-                        sync_with_remote()
-                        st.success("Selected bills removed.")
-                        st.rerun()
-                    else:
-                        st.error("Failed to remove selected bills")
+                    _sc2nc = {v: k for k, v in US_STATES.items()}
+                    _api_states = [_sc2nc.get(s, s) for s in _rescan_states]
+                    if _rescan_federal:
+                        _api_states.append("US")
+                    stats = run_scan(states=list(set(_api_states)), data_dir=DATA_DIR, corpus_manager=corpus)
+                    sync_with_remote()
+                    load_data.clear()
+                    st.session_state.scan_stats = stats
+                    st.rerun()
                 except Exception as e:
-                    st.error(f"Error removing bills: {e}")
-                    logger.error(f"Error removing tracked bills: {e}")
+                    st.error(f"Rescan failed: {e}")
+
+    if "scan_stats" in st.session_state:
+        _sc = st.session_state.scan_stats
+        st.info(
+            f"Found: {_sc.get('total_found', 0)} · "
+            f"New: {_sc.get('new_bills', 0)} · "
+            f"Updated: {_sc.get('changed_status', 0)}"
+        )
+        if st.button("Dismiss", key="dismiss_scan_stats"):
+            del st.session_state.scan_stats
+            st.rerun()
+
+    st.divider()
+    st.header("📚 Master Corpus DB")
+    if corpus:
+        _cached_sessions = corpus.get_cached_sessions()
+        _session_opts = {f"{s['jurisdiction']} — {s['session_name']}": s for s in _cached_sessions}
+        if st.button("🔍 Discover Sessions (CA + US)", key="corpus_discover"):
+            with st.spinner("Discovering..."):
+                corpus.get_active_sessions("CA")
+                corpus.get_active_sessions("US")
+                st.rerun()
+                
+        _sel_label = st.selectbox("Session", options=list(_session_opts.keys()) if _session_opts else ["(none)"], key="corpus_session_select")
+        _sel_session = _session_opts.get(_sel_label)
+        if st.button("⬇️ Bootstrap Bulk Zip", key="corpus_bootstrap") and _sel_session:
+            _pb = st.progress(0, text="Bootstrapping...")
+            corpus.bootstrap_session(_sel_session["session_id"], _sel_session["jurisdiction"], lambda f, m: _pb.progress(min(f, 1.0), text=m))
+            _pb.progress(1.0, text="Done")
+        if st.button("🔄 Incremental API Update", key="corpus_refresh") and _sel_session:
+            _rb = st.progress(0, text="Refreshing...")
+            corpus.refresh_session(_sel_session["session_id"], _sel_session["jurisdiction"], lambda f, m: _rb.progress(min(f, 1.0), text=m))
+            _rb.progress(1.0, text="Done")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN CONTENT / WORKSPACE
+# ═══════════════════════════════════════════════════════════════════════════════
+st.title("🏛️ SCCA Bill Tracker Workspace")
+create_summary_dashboard(df, tracked_bills, bill_notes, corpus=corpus)
+st.divider()
+
+# Top sorting and workspace bar
+wscol1, wscol2, wscol3 = st.columns([1, 4, 1])
+with wscol1:
+    _sort_opts = _SORT_OPTIONS if "All Bills" not in app_mode else _SORT_OPTIONS
+    if "Tracked" in app_mode: _sort_opts = _TRACKED_SORT_OPTIONS
+    global_sort = st.selectbox("Sort logic", _sort_opts, key="global_sort_input")
+    st.session_state.global_sort = global_sort
+with wscol3:
+    st.write("") # spacing
+    if st.button("🚫 Clear All Filters", use_container_width=True):
+        for k in ["global_jur", "global_status", "global_sponsors", "global_committees", "global_date_range", "kw_filter", "tracked_pos", "tracked_prio", "global_search", "global_status_friendly"]:
+            if k in st.session_state:
+                del st.session_state[k]
+        st.session_state.global_search = ""
+        st.rerun()
+
+# Processing helper function
+def run_unified_filters(work_df):
+    if work_df.empty: return work_df
+    
+    # Jurisdiction filter
+    if st.session_state.global_jur:
+        if 'jurisdiction_name' in work_df.columns:
+            work_df = work_df[work_df['jurisdiction_name'].isin(st.session_state.global_jur)]
+            
+    # Status Phase
+    if st.session_state.get("global_status"):
+        if 'status_stage' in work_df.columns:
+            work_df = work_df[work_df['status_stage'].astype(str).isin(st.session_state.global_status)]
+            
+    # Sponsors & Committees
+    if st.session_state.global_sponsors and 'sponsors' in work_df.columns:
+        work_df = work_df[work_df['sponsors'].isin(st.session_state.global_sponsors)]
+    if st.session_state.global_committees and 'committees' in work_df.columns:
+        work_df = work_df[work_df['committees'].isin(st.session_state.global_committees)]
+        
+    # Dates
+    if st.session_state.get("global_date_range") and len(st.session_state.global_date_range) == 2 and 'status_date' in work_df.columns:
+        work_df['_sd'] = pd.to_datetime(work_df['status_date'], errors='coerce')
+        work_df = work_df[
+            (work_df['_sd'] >= pd.to_datetime(st.session_state.global_date_range[0]))
+            & (work_df['_sd'] <= pd.to_datetime(st.session_state.global_date_range[1]))
+        ].drop(columns=['_sd'])
+        
+    # Advanced: Keyword categories
+    if st.session_state.global_search:
+        work_df = search_df(work_df, st.session_state.global_search)
+        
+    return work_df
+
+
+# ────────── ALL BILLS ─────────────────────────────────────────────────────────
+if "All Bills" in app_mode:
+    if not _CORPUS_AVAILABLE or not corpus:
+        st.warning("Master Corpus SQLite not responding.")
     else:
-        st.info("No bills currently tracked.")
+        # Perform DB level filtering for speed, then Pandas filtering for unified fields
+        try:
+            db_df = corpus.search_bills(
+                query=st.session_state.global_search or None,
+                jurisdiction_filter=st.session_state.global_jur or None,
+                status_filter=st.session_state.get("global_status") or None,
+                limit=1000 # Safely bump up so pandas filtering has room
+            )
+        except Exception as e:
+            st.error(f"Search err: {e}")
+            db_df = pd.DataFrame()
+        
+        # Now apply the unified filters in Pandas space safely
+        # Note: global_search, jur, and status were ALREADY pushed down to SQLite!
+        if not db_df.empty:
+            if st.session_state.global_sponsors and 'sponsors' in db_df.columns:
+                db_df = db_df[db_df['sponsors'].isin(st.session_state.global_sponsors)]
+            if st.session_state.global_committees and 'committees' in db_df.columns:
+                db_df = db_df[db_df['committees'].isin(st.session_state.global_committees)]
+            if st.session_state.kw_filter and 'keyword' in db_df.columns:
+                db_df = db_df[db_df['keyword'].isin(st.session_state.kw_filter)]
+            if st.session_state.tracked_pos:
+                db_df = db_df[db_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('position', '') in st.session_state.tracked_pos)]
+            if st.session_state.tracked_prio:
+                db_df = db_df[db_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('priority', '') in st.session_state.tracked_prio)]
+                
+        db_df = apply_sort(db_df, st.session_state.global_sort)
+        
+        st.caption(f"**ALL BILLS MODE** — Showing {len(db_df)} bills from Master Archive")
+        for _, row in db_df.iterrows():
+            bid = str(row.get('bill_id', 'Unknown'))
+            _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"ab_{bid}")
+        if not db_df.empty:
+            st.download_button("📥 Export", build_export_df(db_df, bill_notes, tracked_bills).to_csv(index=False), "all_bills_search.csv", "text/csv")
+
+
+# ────────── KEYWORD MATCHES ───────────────────────────────────────────────────
+elif "Keyword Matches" in app_mode:
+    if df.empty:
+        st.warning("Keyword cache empty. Run a rescan.")
+    else:
+        kw_df = df.copy()
+        kw_df = run_unified_filters(kw_df)
+        
+        if st.session_state.kw_filter and 'keyword' in kw_df.columns:
+            kw_df = kw_df[kw_df['keyword'].isin(st.session_state.kw_filter)]
+        if st.session_state.tracked_pos:
+            kw_df = kw_df[kw_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('position', '') in st.session_state.tracked_pos)]
+        if st.session_state.tracked_prio:
+            kw_df = kw_df[kw_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('priority', '') in st.session_state.tracked_prio)]
+            
+        kw_df = apply_sort(kw_df, st.session_state.global_sort)
+        
+        st.caption(f"**KEYWORD MODE** — Showing {len(kw_df)} matches from the Rescan Cache")
+        for _, row in kw_df.iterrows():
+            bid = str(row.get('bill_id', 'Unknown'))
+            _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"kw_{bid}")
+        if not kw_df.empty:
+            st.download_button("📥 Export Matches", build_export_df(kw_df, bill_notes, tracked_bills).to_csv(index=False), "match_search.csv", "text/csv")
+
+
+# ────────── TRACKED BILLS ─────────────────────────────────────────────────────
+elif "Tracked Bills" in app_mode:
+    if not tracked_bills:
+        st.info("No tracked bills. Flag some bills from the repository first.")
+    else:
+        tr_df = get_tracked_bills_df(tracked_bills, corpus, df)
+        tr_df = run_unified_filters(tr_df)
+        
+        # Apply standard advanced filters
+        if st.session_state.kw_filter and 'keyword' in tr_df.columns:
+            tr_df = tr_df[tr_df['keyword'].isin(st.session_state.kw_filter)]
+        if st.session_state.tracked_pos:
+            tr_df = tr_df[tr_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('position', '') in st.session_state.tracked_pos)]
+        if st.session_state.tracked_prio:
+            tr_df = tr_df[tr_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('priority', '') in st.session_state.tracked_prio)]
+            
+        # Apply Tracked-Specific Quick filter
+        _qf = st.session_state.get("tracked_quick", "All Tracked")
+        if not tr_df.empty and _qf != "All Tracked":
+            if _qf == "Has Notes":
+                tr_df = tr_df[tr_df['bill_id'].astype(str).apply(lambda x: bool(bill_notes.get(x, {}).get('comment', '').strip()))]
+            elif _qf == "No Notes":
+                tr_df = tr_df[tr_df['bill_id'].astype(str).apply(lambda x: not bool(bill_notes.get(x, {}).get('comment', '').strip()))]
+            elif _qf == "High Priority":
+                tr_df = tr_df[tr_df['bill_id'].astype(str).apply(lambda x: bill_notes.get(x, {}).get('priority', '') == 'High')]
+            elif _qf == "Needs Attention":
+                from datetime import datetime, timedelta, timezone
+                now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+                week_ago = now_utc - timedelta(days=7)
+                def needs_attn(row):
+                    b = str(row.get('bill_id'))
+                    note = bill_notes.get(b, {})
+                    no_note = not bool(note.get('comment', '').strip())
+                    no_pos = note.get('position', '') in ('', 'No Position')
+                    is_high = note.get('priority', '') == 'High'
+                    recent_action = False
+                    ad = row.get('last_action_date', '') or row.get('status_date', '')
+                    if ad:
+                        try:
+                            dt = datetime.strptime(str(ad).split()[0], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                            if dt > week_ago: recent_action = True
+                        except: pass
+                    return no_note or no_pos or is_high or recent_action
+                tr_df = tr_df[tr_df.apply(needs_attn, axis=1)]
+            elif _qf == "Recently Updated":
+                from datetime import datetime, timedelta, timezone
+                now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+                week_ago = now_utc - timedelta(days=7)
+                def is_recent(b):
+                    lr = bill_notes.get(b, {}).get('last_reviewed', '')
+                    if not lr: return False
+                    try:
+                        dt = datetime.fromisoformat(lr).replace(tzinfo=timezone.utc)
+                        return dt > week_ago
+                    except: return False
+                tr_df = tr_df[tr_df['bill_id'].astype(str).apply(is_recent)]
+                
+        tr_df = apply_sort(tr_df, st.session_state.global_sort)
+        
+        st.caption(f"**TRACKED MODE** — Showing {len(tr_df)} Tracked Bills")
+        for _, row in tr_df.iterrows():
+            bid = str(row.get('bill_id', 'Unknown'))
+            _render_bill_card(row, bill_notes.get(bid, {}), bid, bill_notes, tracked_bills, key_prefix=f"tr_{bid}")
+            
+        st.divider()
+        if not tr_df.empty:
+            st.download_button("📥 Export Tracked Archive", build_export_df(tr_df, bill_notes, tracked_bills).to_csv(index=False), "tracked_archive.csv", "text/csv")
+            
+        with st.expander("🗑️ Bulk Remove Tracked Bills"):
+            _trm = st.multiselect("Select items", tracked_bills)
+            if st.button("Delete Tracking", type="primary") and _trm:
+                for t in _trm: tracked_bills.remove(t)
+                save_tracked(tracked_bills)
+                st.rerun()
+
