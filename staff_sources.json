@@ -1,0 +1,12 @@
+{
+  "staff_sources": [
+    {
+      "label": "Live Capitol Matrix",
+      "type": "google_sheet_live",
+      "url": "https://docs.google.com/spreadsheets/d/1gFeGy72R_-FSFrjXbKCAAvVsvNjyV7t_TUvFoB12vys/export?format=xlsx",
+      "enabled": true,
+      "state": "CA",
+      "chamber": "Both"
+    }
+  ]
+}
