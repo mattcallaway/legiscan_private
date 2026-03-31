@@ -526,6 +526,17 @@ class CorpusManager:
         for v in votes:
             p_id = v.get("people_id")
             if not p_id: continue
+            
+            p_name = v.get("name")
+            if p_name:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO people (people_id, name, party)
+                    VALUES (?, ?, ?)
+                    """,
+                    (p_id, p_name, v.get("party"))
+                )
+                
             conn.execute(
                 """
                 INSERT INTO legislator_votes (roll_call_id, people_id, vote_id, vote_text)
