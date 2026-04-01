@@ -604,9 +604,18 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                                     cols = st.columns(3)
                                     for v_idx, mv in enumerate(m_votes):
                                         v_txt = mv.get('vote_text', 'Unknown')
-                                        p_name = mv.get('name') or f"ID {mv.get('people_id')}"
+                                        raw_name = mv.get('name') or ""
+                                        
+                                        if not raw_name or "Unknown Profile" in raw_name:
+                                            p_name = f"<span style='color:red;'>[Unresolved ID {mv.get('people_id')}]</span>"
+                                        elif mv.get('staff_legislator_id'):
+                                            # If mapped, indicate linkage (we could link to profile here later)
+                                            p_name = f"**{raw_name}**"
+                                        else:
+                                            p_name = raw_name
+                                            
                                         color = "green" if v_txt == "Yea" else ("red" if v_txt == "Nay" else "gray")
-                                        cols[v_idx % 3].markdown(f"*{p_name}*: <span style='color:{color}; font-weight:bold;'>{v_txt}</span>", unsafe_allow_html=True)
+                                        cols[v_idx % 3].markdown(f"{p_name}: <span style='color:{color}; font-weight:bold;'>{v_txt}</span>", unsafe_allow_html=True)
                             st.divider()
                 except Exception as e:
                     st.error(f"Error loading votes: {e}")
@@ -894,6 +903,35 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                     st.success(f"Matched {res['matched']}, Unmatched {res['unmatched']} out of {res['total']}")
                     st.rerun()
         except: pass
+        
+        st.divider()
+        st.header("🛠️ Diagnostic Tools")
+        if st.button("📊 Vote-Person Pipeline Diagnostics"):
+            st.session_state.show_diagnostics = not st.session_state.get("show_diagnostics", False)
+            
+        if st.session_state.get("show_diagnostics", False):
+            st.info("Gathering database forensics...")
+            conn = corpus._get_conn()
+            db_stats = {
+                "roll_calls": conn.execute("SELECT COUNT(*) FROM roll_calls").fetchone()[0],
+                "leg_votes": conn.execute("SELECT COUNT(*) FROM legislator_votes").fetchone()[0],
+                "people_total": conn.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+                "people_unknown": conn.execute("SELECT COUNT(*) FROM people WHERE name LIKE '%Unknown Profile%'").fetchone()[0],
+                "people_mapped": conn.execute("SELECT COUNT(*) FROM people_mapping").fetchone()[0]
+            }
+            st.write(f"**Roll Calls Stored:** {db_stats['roll_calls']:,}")
+            st.write(f"**Individual Votes Stored:** {db_stats['leg_votes']:,}")
+            st.write(f"**People Profiles Extracted:** {db_stats['people_total']:,}")
+            st.write(f"**Profiles Missing Name (ID Only):** {db_stats['people_unknown']:,}")
+            st.write(f"**Profiles Mapped to Staff Roster:** {db_stats['people_mapped']:,}")
+            
+            st.caption("Recent Failed Name Extracts & Fallbacks:")
+            sample = conn.execute("SELECT people_id, name, party FROM people WHERE name LIKE '%Unknown Profile%' LIMIT 10").fetchall()
+            if sample:
+                st.dataframe(pd.DataFrame([dict(s) for s in sample]), use_container_width=True)
+            else:
+                st.success("No recent unknowns!")
+            
     st.divider()
 
     st.header("👔 Staff Intelligence")

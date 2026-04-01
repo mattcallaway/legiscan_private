@@ -521,21 +521,22 @@ class CorpusManager:
             )
         )
         
-        # Now handle individual votes if present
         votes = r.get("votes", [])
         for v in votes:
             p_id = v.get("people_id")
             if not p_id: continue
             
             p_name = v.get("name")
-            if p_name:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO people (people_id, name, party)
-                    VALUES (?, ?, ?)
-                    """,
-                    (p_id, p_name, v.get("party"))
-                )
+            if not p_name:
+                p_name = f"Unknown Profile (ID {p_id})"
+                
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO people (people_id, name, party)
+                VALUES (?, ?, ?)
+                """,
+                (p_id, p_name, v.get("party"))
+            )
                 
             conn.execute(
                 """
@@ -1194,15 +1195,44 @@ class CorpusManager:
                 staff_lookup[(lname, fname)] = staff_id
         
         matched, unmatched = 0, 0
+        
+        # Also build a fallback full-name substring lookup
+        staff_fullname_lookup = {}
+        for _, row in staff_df.iterrows():
+            lname = _norm(row.get("last_name", ""))
+            fname = _norm(row.get("first_name", ""))
+            staff_id = str(row.get("legislator_id", ""))
+            full_norm = _norm(f"{fname}{lname}")
+            if full_norm:
+                staff_fullname_lookup[full_norm] = staff_id
+        
         for p in people_rows:
             pid = p["people_id"]
+            p_name_raw = p["name"] or ""
+            
+            if "Unknown Profile" in p_name_raw:
+                unmatched += 1
+                continue
+                
             p_lname = _norm(p["last_name"])
             p_fname = _norm(p["first_name"])
             p_chamber = "upper" if "senate" in str(p["chamber"]).lower() else "lower"
+            p_full_norm = _norm(p_name_raw)
+
             if not p_lname:
-                p_lname = _norm(p["name"].split()[-1] if p["name"] else "")
+                parts = p_name_raw.split()
+                p_lname = _norm(parts[-1] if parts else "")
+                p_fname = _norm(parts[0] if len(parts) > 1 else "")
             
+            # Primary exact match checks
             match_id = staff_lookup.get((p_lname, p_chamber)) or staff_lookup.get((p_lname, p_fname))
+            
+            # Secondary fallback substring matching
+            if not match_id and p_full_norm:
+                for target_norm, s_id in staff_fullname_lookup.items():
+                    if p_full_norm in target_norm or target_norm in p_full_norm:
+                        match_id = s_id
+                        break
             
             if match_id:
                 matched += 1
