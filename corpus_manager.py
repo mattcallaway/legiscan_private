@@ -597,6 +597,10 @@ class CorpusManager:
                     bill_id = bill_data.get("bill_id")
                     if not bill_id:
                         continue
+                        
+                    for sponsor in bill_data.get("sponsors", []):
+                        if sponsor.get("people_id"):
+                            self._upsert_person(conn, sponsor)
 
                     row = _flatten_bill_to_row(bill_data, jurisdiction, session_id)
                     self._upsert_bill(conn, row, stats)
@@ -687,6 +691,10 @@ class CorpusManager:
             if not bill_detail:
                 stats["errors"] += 1
                 continue
+
+            for sponsor in bill_detail.get("sponsors", []):
+                if sponsor.get("people_id"):
+                    self._upsert_person(conn, sponsor)
 
             bill_detail["change_hash"] = meta.get("change_hash", "")
             row = _flatten_bill_to_row(bill_detail, jurisdiction, session_id)
