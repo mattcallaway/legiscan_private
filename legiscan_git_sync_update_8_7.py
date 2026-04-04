@@ -1416,15 +1416,14 @@ elif "Legislator Directory" in app_mode:
             st.session_state.pop("active_staff_profile", None)
 
         # ── Helper: render inline vote table ────────────────────────────────────
-        def _render_vote_row(v: dict):
-            passed_icon = "✅" if v.get("passed") else "❌"
+        def _render_vote_row(v: dict, _idx: int = 0):
             vote_icon = {"Yea": "🟢", "Nay": "🔴", "NV": "⬜", "Absent": "⬛"}.get(v.get("vote_text", ""), "❓")
             bn = v.get("bill_number", "")
             col_a, col_b, col_c, col_d = st.columns([2, 1, 4, 1])
             col_a.markdown(f"**{v.get('vote_date', '')[:10]}**")
             col_b.markdown(f"{vote_icon} {v.get('vote_text', '')}")
             col_c.markdown(f"{bn} — {v.get('motion', '')[:60]}")
-            if bn and col_d.button("→ Bill", key=f"votelink_{bn}_{v.get('vote_date','')[:10]}"):
+            if bn and col_d.button("→ Bill", key=f"votelink_{_idx}_{bn}"):
                 _go_to_bill(bn)
                 st.rerun()
 
@@ -1701,8 +1700,8 @@ elif "Legislator Directory" in app_mode:
                         vc3.metric("⬜ NV", _vote_counts.get("NV", 0))
                         vc4.metric("⬛ Absent", _vote_counts.get("Absent", 0))
                         st.divider()
-                        for v in votes:
-                            _render_vote_row(v)
+                        for _vi, v in enumerate(votes):
+                            _render_vote_row(v, _vi)
                 else:
                     st.caption("Corpus offline — voting history unavailable.")
 
