@@ -509,8 +509,17 @@ def _show_bill_text_modal(bill_id, doc_id, bill_number, bill_url=None):
         st.error("Corpus metadata not available.")
         return
     
+    # Safe conversion from pandas/JSON/SQLite types
+    try:
+        clean_bill_id = int(bill_id)
+        # Check for NaN/None safely
+        clean_doc_id = int(doc_id) if (doc_id is not None and str(doc_id).lower() != 'nan') else None
+    except (ValueError, TypeError):
+        clean_bill_id = 0
+        clean_doc_id = None
+
     with st.spinner("Fetching full text from LegiScan..."):
-        res = corpus.get_bill_text(int(bill_id), doc_id=int(doc_id) if doc_id else None)
+        res = corpus.get_bill_text(clean_bill_id, doc_id=clean_doc_id)
     
     if not res:
         st.error("Could not retrieve bill text. It may not be available in HTML format yet.")
