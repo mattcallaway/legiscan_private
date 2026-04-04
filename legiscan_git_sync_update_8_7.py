@@ -1588,11 +1588,29 @@ elif "Legislator Directory" in app_mode:
             with t_issue:
                 if l_id:
                     iss_ls = staff_manager.get_legislator_issues(l_id)
-                    if iss_ls:
-                        st.table(pd.DataFrame(iss_ls).rename(
-                            columns={"issue_area": "Issue Area", "staff_name": "Point of Contact"}))
-                    else:
+                    if not iss_ls:
                         st.caption("No issues mapped.")
+                    else:
+                        # Build name index once — O(1) lookups per row
+                        _sname_idx = staff_manager.build_staff_name_index()
+                        _last_issue = None
+                        for iss in iss_ls:
+                            issue = iss.get("issue_area", "")
+                            sname = iss.get("staff_name", "")
+                            # Print issue area header only when it changes
+                            if issue != _last_issue:
+                                st.markdown(f"**{issue}**")
+                                _last_issue = issue
+                            _srec = _sname_idx.get(sname.lower().strip())
+                            i_col1, i_col2 = st.columns([5, 1])
+                            i_col1.markdown(f"&nbsp;&nbsp;&nbsp;{sname}")
+                            if _srec:
+                                if i_col2.button("View Profile →",
+                                                  key=f"iss_prof_{_srec['staff_id']}_{issue[:20]}"):
+                                    st.session_state.active_staff_profile = _srec
+                                    st.rerun()
+                            else:
+                                i_col2.caption("")
                 else:
                     st.caption("No issue assignments mapped for this legislator.")
 
@@ -1628,11 +1646,28 @@ elif "Legislator Directory" in app_mode:
             with t_cmte:
                 if l_norm:
                     cmte_ls = staff_manager.get_legislator_committee_matrix(l_norm)
-                    if cmte_ls:
-                        st.table(pd.DataFrame(cmte_ls).rename(
-                            columns={"committee": "Committee", "role": "Role", "staff_name": "Consultant"}))
-                    else:
+                    if not cmte_ls:
                         st.caption("No primary committee leadership mapped.")
+                    else:
+                        _sname_idx_c = staff_manager.build_staff_name_index()
+                        _last_cmte = None
+                        for cr in cmte_ls:
+                            cmte = cr.get("committee", "")
+                            role = cr.get("role", "")
+                            sname = cr.get("staff_name", "")
+                            if cmte != _last_cmte:
+                                st.markdown(f"**🏛️ {cmte}**")
+                                _last_cmte = cmte
+                            _srec_c = _sname_idx_c.get(sname.lower().strip())
+                            c_col1, c_col2 = st.columns([5, 1])
+                            c_col1.markdown(f"&nbsp;&nbsp;&nbsp;*{role}* — {sname}")
+                            if _srec_c and sname != "—":
+                                if c_col2.button("View Profile →",
+                                                  key=f"cmte_prof_{_srec_c['staff_id']}_{cmte[:15]}"):
+                                    st.session_state.active_staff_profile = _srec_c
+                                    st.rerun()
+                            else:
+                                c_col2.caption("")
                 else:
                     st.caption("Cannot resolve committee status.")
 

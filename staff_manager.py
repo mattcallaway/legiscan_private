@@ -470,3 +470,43 @@ class StaffManager:
                 else:
                     res.append({"committee": c_name, "role": "No Consultants Mapped", "staff_name": "—"})
             return res
+
+    def get_staff_by_name(self, name: str) -> dict | None:
+        """
+        Look up a full staff record from legislator_staff by name.
+        Tries exact match first, then case-insensitive partial match.
+        Returns a staff dict (with staff_id, legislator_id, role, email, etc.) or None.
+        """
+        if not name or name == "—":
+            return None
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            # Exact match (case-insensitive)
+            row = conn.execute(
+                "SELECT * FROM legislator_staff WHERE LOWER(name) = ? LIMIT 1",
+                (name.lower(),)
+            ).fetchone()
+            if row:
+                return dict(row)
+            # Partial match
+            row = conn.execute(
+                "SELECT * FROM legislator_staff WHERE LOWER(name) LIKE ? LIMIT 1",
+                (f"%{name.lower()}%",)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def build_staff_name_index(self) -> dict:
+        """
+        Return a mapping of lowercase staff name → staff dict for all staff in the DB.
+        Useful for O(1) lookups when rendering many names at once.
+        """
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM legislator_staff").fetchall()
+        index = {}
+        for row in rows:
+            d = dict(row)
+            key = (d.get("name") or "").lower().strip()
+            if key:
+                index[key] = d
+        return index
