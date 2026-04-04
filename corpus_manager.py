@@ -115,6 +115,16 @@ def _flatten_bill_to_row(details: dict, jurisdiction: str, session_id: int) -> d
         else:
             ref_list.append(str(ref))
 
+    # Latest text version finding
+    texts = details.get("texts", [])
+    latest_doc_id = None
+    latest_doc_url = ""
+    if texts and isinstance(texts, list):
+        # Usually ordered by date desc or at least chronological
+        latest = texts[-1] 
+        latest_doc_id = latest.get("doc_id")
+        latest_doc_url = latest.get("url", "")
+
     return {
         "bill_id":          int(details.get("bill_id", 0)),
         "session_id":       session_id,
@@ -133,6 +143,8 @@ def _flatten_bill_to_row(details: dict, jurisdiction: str, session_id: int) -> d
         "last_action_date": details.get("last_action_date", details.get("status_date", "")),
         "referrals":        "; ".join(ref_list),
         "change_hash":      details.get("change_hash", ""),
+        "latest_doc_id":    latest_doc_id,
+        "latest_doc_url":   latest_doc_url,
         "last_fetched":     datetime.now(timezone.utc).isoformat(),
     }
 
@@ -174,8 +186,20 @@ CREATE TABLE IF NOT EXISTS bills (
     last_action_date TEXT,
     referrals        TEXT,
     change_hash      TEXT,
+    latest_doc_id    INTEGER,
+    latest_doc_url   TEXT,
     last_fetched     TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS bill_texts (
+    doc_id          INTEGER PRIMARY KEY,
+    bill_id         INTEGER NOT NULL,
+    mime_type       TEXT,
+    content_html    TEXT,
+    content_pdf_url TEXT,
+    last_fetched    TEXT,
+    FOREIGN KEY (bill_id) REFERENCES bills(bill_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bills_jurisdiction ON bills(jurisdiction);
@@ -271,6 +295,16 @@ class CorpusManager:
     def _init_db(self) -> None:
         conn = self._get_conn()
         conn.executescript(_DDL)
+        
+        # Migration: add columns if they don't exist in bills table
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(bills)")
+        cols = [c[1] for c in cur.fetchall()]
+        if "latest_doc_id" not in cols:
+            conn.execute("ALTER TABLE bills ADD COLUMN latest_doc_id INTEGER")
+        if "latest_doc_url" not in cols:
+            conn.execute("ALTER TABLE bills ADD COLUMN latest_doc_url TEXT")
+
         conn.execute(
             "INSERT OR IGNORE INTO sync_meta (key, value) VALUES (?, ?)",
             ("schema_version", SCHEMA_VERSION),
@@ -1017,6 +1051,8 @@ class CorpusManager:
                 b.last_action_date,
                 b.referrals,
                 b.change_hash,
+                b.latest_doc_id,
+                b.latest_doc_url,
                 b.last_fetched,
 
                 -- ── Keyword overlay (comma-joined for display) ──
@@ -1068,7 +1104,7 @@ class CorpusManager:
                 b.url, b.committee AS committee, b.committee AS committees,
                 b.sponsor_names AS sponsor_names, b.sponsor_names AS sponsors,
                 b.subjects, b.history, b.last_action, b.last_action_date, b.referrals,
-                b.change_hash, b.last_fetched,
+                b.change_hash, b.latest_doc_id, b.latest_doc_url, b.last_fetched,
                 COALESCE(
                     (SELECT GROUP_CONCAT(km.keyword, '; ')
                      FROM keyword_matches km WHERE km.bill_id = b.bill_id), ''
@@ -1303,3 +1339,121 @@ class CorpusManager:
         matched = conn.execute("SELECT COUNT(*) FROM people_mapping WHERE staff_legislator_id IS NOT NULL").fetchone()[0]
         unmatched = conn.execute("SELECT COUNT(*) FROM people_mapping WHERE staff_legislator_id IS NULL").fetchone()[0]
         return {"total": total, "matched": matched, "unmatched": unmatched}
+
+    def get_votes_for_legislator_by_name(self, first_name: str, last_name: str) -> list[dict]:
+        """
+        Fallback name-based lookup for voting history. 
+        Returns votes for anyone whose extracted name starts-with or matches the target.
+        """
+        conn = self._get_conn()
+        sql = """
+            SELECT 
+                rc.roll_call_id, rc.date as vote_date, rc.desc as motion,
+                lv.vote_text, b.bill_number
+            FROM people p
+            JOIN legislator_votes lv ON p.people_id = lv.people_id
+            JOIN roll_calls rc ON lv.roll_call_id = rc.roll_call_id
+            JOIN bills b ON rc.bill_id = b.bill_id
+            WHERE p.last_name = ?
+            ORDER BY rc.date DESC
+        """
+        rows = conn.execute(sql, (last_name,)).fetchall()
+        # Basic filter for first name if multiple last names exist
+        results = [dict(r) for r in rows]
+        return results
+
+    # ── Bill Text & Detailed Bill Fetching ───────────────────────────────────
+
+    def get_bill(self, bill_id: int) -> Optional[dict]:
+        """Fetch detailed bill JSON from LegiScan API by bill_id."""
+        logger.info(f"API: get_bill(bill_id={bill_id})")
+        res = self._api_get({"op": "getBill", "id": bill_id})
+        if res.get("status") == "OK" and "bill" in res:
+            return res["bill"]
+        return None
+
+    def get_bill_text(self, bill_id: int, doc_id: Optional[int] = None) -> Optional[dict]:
+        """
+        Get the full text of a bill. Uses local cache in bill_texts table if present.
+        Returns a dict: { 'html': str, 'pdf_url': str, 'mime': str }
+        """
+        conn = self._get_conn()
+        
+        # 1. Try cache
+        if doc_id:
+            cached = conn.execute(
+                "SELECT content_html, content_pdf_url, mime_type FROM bill_texts WHERE doc_id=?", 
+                (doc_id,)
+            ).fetchone()
+            if cached:
+                return {
+                    "html": cached["content_html"], 
+                    "pdf_url": cached["content_pdf_url"], 
+                    "mime": cached["mime_type"]
+                }
+
+        # 2. If no doc_id given, find the latest one from the bills table
+        if not doc_id:
+            row = conn.execute("SELECT latest_doc_id FROM bills WHERE bill_id=?", (bill_id,)).fetchone()
+            if row and row["latest_doc_id"]:
+                doc_id = row["latest_doc_id"]
+            else:
+                # Need to refresh bill details to find texts
+                details = self.get_bill(bill_id)
+                if details:
+                    # Update the bill row with latest text markers
+                    # (This also ensures subsequent calls skip this check)
+                    texts = details.get("texts", [])
+                    if texts:
+                        latest = texts[-1]
+                        doc_id = latest.get("doc_id")
+                        conn.execute(
+                            "UPDATE bills SET latest_doc_id=?, latest_doc_url=? WHERE bill_id=?",
+                            (doc_id, latest.get("url", ""), bill_id)
+                        )
+                        conn.commit()
+
+        if not doc_id:
+            return None
+
+        # 3. Double check cache with resolved doc_id
+        cached = conn.execute(
+            "SELECT content_html, content_pdf_url, mime_type FROM bill_texts WHERE doc_id=?", 
+            (doc_id,)
+        ).fetchone()
+        if cached:
+            return {
+                "html": cached["content_html"], 
+                "pdf_url": cached["content_pdf_url"], 
+                "mime": cached["mime_type"]
+            }
+
+        # 4. Fetch from API
+        logger.info(f"API: get_bill_text(doc_id={doc_id})")
+        res = self._api_get({"op": "getBillText", "id": doc_id})
+        if res.get("status") == "OK" and "text" in res:
+            text_data = res["text"]
+            mime = text_data.get("mime", "")
+            content_b64 = text_data.get("doc", "")
+            
+            html_content = ""
+            pdf_url = text_data.get("state_link", "")
+            
+            if "html" in mime.lower() and content_b64:
+                try:
+                    html_content = base64.b64decode(content_b64).decode("utf-8", errors="replace")
+                except:
+                    html_content = "Failed to decode HTML content."
+            
+            # Cache it
+            conn.execute(
+                """INSERT INTO bill_texts 
+                   (doc_id, bill_id, mime_type, content_html, content_pdf_url, last_fetched)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (doc_id, bill_id, mime, html_content, pdf_url, datetime.now(timezone.utc).isoformat())
+            )
+            conn.commit()
+            
+            return {"html": html_content, "pdf_url": pdf_url, "mime": mime}
+
+        return None

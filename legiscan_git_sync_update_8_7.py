@@ -502,6 +502,39 @@ def _normalize_note(note: dict) -> dict:
         "last_reviewed": note.get("last_reviewed", ""),
     }
 
+@st.dialog("📄 Bill Text", width="large")
+def _show_bill_text_modal(bill_id, doc_id, bill_number, bill_url=None):
+    st.subheader(f"Text for {bill_number}")
+    if not corpus:
+        st.error("Corpus metadata not available.")
+        return
+    
+    with st.spinner("Fetching full text from LegiScan..."):
+        res = corpus.get_bill_text(int(bill_id), doc_id=int(doc_id) if doc_id else None)
+    
+    if not res:
+        st.error("Could not retrieve bill text. It may not be available in HTML format yet.")
+        if bill_url:
+            st.link_button("View on LegiScan", bill_url)
+        return
+    
+    if res.get("html"):
+        # Wrap in a scrolling div for better UX
+        st.components.v1.html(
+            f"""
+            <div style="font-family: sans-serif; line-height: 1.6; color: #333; height: 80vh; overflow-y: scroll; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+                {res['html']}
+            </div>
+            """,
+            height=850,
+            scrolling=False
+        )
+    elif res.get("pdf_url"):
+        st.info("HTML text not available. You can view the official PDF below:")
+        st.link_button("📂 View PDF", res['pdf_url'], use_container_width=True)
+    else:
+        st.warning("No text content found.")
+
 def _render_bill_card(row, raw_note: dict, bill_id: str,
                       bill_notes: dict, tracked_bills: list,
                       key_prefix: str) -> dict:
@@ -585,6 +618,11 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                     
             if row.get('url'):
                 st.link_button("📄 LegiScan", row['url'], use_container_width=True)
+            
+            # 📖 In-app Text Reader
+            doc_id = row.get("latest_doc_id")
+            if st.button("📖 Open Text", key=f"{key_prefix}_text", use_container_width=True):
+                _show_bill_text_modal(bill_id, doc_id, disp_bill_number, bill_url=row.get('url'))
 
         with st.expander("📝 View Details & Edit Notes"):
             info1, info2 = st.columns(2)
