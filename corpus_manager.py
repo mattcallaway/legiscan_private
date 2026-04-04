@@ -1155,7 +1155,7 @@ class CorpusManager:
         conn = self._get_conn()
         sql = """
             SELECT lv.vote_text, rc.date as vote_date, rc.desc as motion, rc.passed,
-                   b.bill_number, b.title, b.jurisdiction
+                   b.bill_number, b.title, b.jurisdiction, b.bill_id
             FROM legislator_votes lv
             JOIN roll_calls rc ON lv.roll_call_id = rc.roll_call_id
             JOIN bills b ON rc.bill_id = b.bill_id
@@ -1165,6 +1165,49 @@ class CorpusManager:
         """
         rows = conn.execute(sql, (staff_legislator_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def get_votes_for_legislator_by_name(self, first_name: str, last_name: str) -> list[dict]:
+        """
+        Fallback vote lookup by name — works even when people_mapping hasn't been run.
+        Matches on last_name (required) and optionally first_name from the people table.
+        """
+        conn = self._get_conn()
+        if not last_name:
+            return []
+        params: list = [f"%{last_name.lower()}%"]
+        name_clause = "LOWER(p.last_name) LIKE ?"
+        if first_name:
+            name_clause += " AND LOWER(p.first_name) LIKE ?"
+            params.append(f"%{first_name.lower()}%")
+        sql = f"""
+            SELECT lv.vote_text, rc.date as vote_date, rc.desc as motion, rc.passed,
+                   b.bill_number, b.title, b.jurisdiction, b.bill_id,
+                   p.name as legislator_name
+            FROM legislator_votes lv
+            JOIN people p ON lv.people_id = p.people_id
+            JOIN roll_calls rc ON lv.roll_call_id = rc.roll_call_id
+            JOIN bills b ON rc.bill_id = b.bill_id
+            WHERE {name_clause}
+            ORDER BY rc.date DESC
+            LIMIT 200
+        """
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_staff_cross_reference(self, staff_name: str) -> list[dict]:
+        """
+        Find all legislators a given staff member works under,
+        and what issue areas they cover. Uses staff_manager-side data
+        via a direct name search across legislator_votes people names.
+        Returns list of {people_id, name, party, chamber, district}.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM people WHERE LOWER(name) LIKE ? LIMIT 20",
+            (f"%{staff_name.lower()}%",)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
         
     def sync_people_mapping(self, staff_df: pd.DataFrame) -> dict:
         """

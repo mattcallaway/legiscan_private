@@ -291,6 +291,37 @@ def save_notes(notes):
         return False
 
 
+# ─── Profile note helpers (legislators & staff) ───────────────────────────────
+def _profile_notes_path(kind: str) -> str:
+    """kind = 'legislator' or 'staff'"""
+    return os.path.join(_user_data_dir, f"{kind}_notes.json")
+
+def load_profile_notes(kind: str) -> dict:
+    path = _profile_notes_path(kind)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading {kind} notes: {e}")
+        return {}
+
+def save_profile_notes(kind: str, notes: dict) -> bool:
+    path = _profile_notes_path(kind)
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(notes, f, indent=2)
+        os.replace(tmp, path)
+        sync_with_remote()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving {kind} notes: {e}")
+        st.error(f"Error saving {kind} notes: {e}")
+        return False
+
+
 # ─── Search helper ────────────────────────────────────────────────────────────
 def search_df(df: pd.DataFrame, query: str) -> pd.DataFrame:
     """Full-text search across standard CSV columns."""
@@ -1376,115 +1407,319 @@ elif "Legislator Directory" in app_mode:
             leg_df = staff_manager.get_all_legislators()
         except:
             leg_df = pd.DataFrame()
-            
-        if st.session_state.get('active_profile'):
+
+        # ── Helper: jump to bill view ────────────────────────────────────────────
+        def _go_to_bill(bill_number: str):
+            st.session_state["global_search"] = bill_number
+            st.session_state["app_mode_radio"] = "🔍 All Bills"
+            st.session_state.pop("active_profile", None)
+            st.session_state.pop("active_staff_profile", None)
+
+        # ── Helper: render inline vote table ────────────────────────────────────
+        def _render_vote_row(v: dict):
+            passed_icon = "✅" if v.get("passed") else "❌"
+            vote_icon = {"Yea": "🟢", "Nay": "🔴", "NV": "⬜", "Absent": "⬛"}.get(v.get("vote_text", ""), "❓")
+            bn = v.get("bill_number", "")
+            col_a, col_b, col_c, col_d = st.columns([2, 1, 4, 1])
+            col_a.markdown(f"**{v.get('vote_date', '')[:10]}**")
+            col_b.markdown(f"{vote_icon} {v.get('vote_text', '')}")
+            col_c.markdown(f"{bn} — {v.get('motion', '')[:60]}")
+            if bn and col_d.button("→ Bill", key=f"votelink_{bn}_{v.get('vote_date','')[:10]}"):
+                _go_to_bill(bn)
+                st.rerun()
+
+        # ── Staff profile sub-view ───────────────────────────────────────────────
+        if st.session_state.get("active_staff_profile"):
+            sp = st.session_state.active_staff_profile   # dict: {staff_id, name, role, email, legislator_id}
+            back_leg = st.session_state.get("active_profile")
+
+            def _back_from_staff():
+                st.session_state.pop("active_staff_profile", None)
+            st.button("⬅️ Back to Legislator Profile" if back_leg else "⬅️ Back to Directory",
+                      on_click=_back_from_staff)
+            st.divider()
+
+            st.subheader(f"🧑‍💼 {sp.get('name', 'Staffer')}")
+            st.caption(f"**Role:** {sp.get('role','').replace('_',' ').title()}  |  **Email:** {sp.get('email') or '—'}")
+
+            # Find all legislators this person works for
+            st.markdown("#### 🏛️ Works For")
+            try:
+                all_leg_staff = []
+                for _, lrow in leg_df.iterrows():
+                    for s in staff_manager.get_legislator_staff(lrow["legislator_id"]):
+                        if s["name"].lower() == sp.get("name", "").lower():
+                            all_leg_staff.append({
+                                "Legislator": lrow.get("name"),
+                                "Chamber": lrow.get("chamber"),
+                                "District": lrow.get("district"),
+                                "Role": s["role"].replace("_", " ").title(),
+                            })
+                if all_leg_staff:
+                    st.dataframe(pd.DataFrame(all_leg_staff), hide_index=True, use_container_width=True)
+                else:
+                    st.caption("No legislator cross-references found.")
+            except Exception as _se:
+                st.caption(f"Could not load cross-references: {_se}")
+
+            # Issue areas for this staffer
+            st.markdown("#### 📋 Issue Assignments")
+            try:
+                all_issues = []
+                with staff_manager._get_conn() as sc:
+                    sc.row_factory = __import__("sqlite3").Row
+                    issue_rows = sc.execute(
+                        "SELECT lia.issue_area, l.name as legislator FROM legislator_issue_assignments lia "
+                        "JOIN legislators l ON lia.legislator_id = l.legislator_id "
+                        "WHERE LOWER(lia.staff_name) LIKE ?",
+                        (f"%{sp.get('name','').lower()}%",)
+                    ).fetchall()
+                    all_issues = [dict(r) for r in issue_rows]
+                if all_issues:
+                    st.dataframe(pd.DataFrame(all_issues).rename(columns={"issue_area": "Issue Area", "legislator": "Legislator"}),
+                                 hide_index=True, use_container_width=True)
+                else:
+                    st.caption("No issue areas assigned.")
+            except Exception as _ie:
+                st.caption(f"Could not load issue assignments: {_ie}")
+
+            # Committee work
+            st.markdown("#### 🏛️ Committee Involvement")
+            try:
+                with staff_manager._get_conn() as sc:
+                    sc.row_factory = __import__("sqlite3").Row
+                    cmte_rows = sc.execute(
+                        "SELECT committee_name, chamber, role FROM committee_staff WHERE LOWER(staff_name) LIKE ?",
+                        (f"%{sp.get('name','').lower()}%",)
+                    ).fetchall()
+                if cmte_rows:
+                    st.dataframe(
+                        pd.DataFrame([dict(r) for r in cmte_rows]).rename(
+                            columns={"committee_name": "Committee", "chamber": "Chamber", "role": "Role"}
+                        ),
+                        hide_index=True, use_container_width=True
+                    )
+                else:
+                    st.caption("No committee roles found.")
+            except Exception as _ce:
+                st.caption(f"Could not load committee data: {_ce}")
+
+            # Notes
+            st.divider()
+            st.markdown("#### 📝 Your Notes")
+            _snotes = load_profile_notes("staff")
+            _snote_key = sp.get("staff_id", sp.get("name", "unknown"))
+            _current_snote = _snotes.get(_snote_key, "")
+            _new_snote = st.text_area("Notes about this staffer", value=_current_snote, height=120,
+                                       key=f"snote_{_snote_key}")
+            if st.button("💾 Save Staffer Notes", key=f"snote_save_{_snote_key}"):
+                _snotes[_snote_key] = _new_snote
+                if save_profile_notes("staff", _snotes):
+                    st.success("Saved!")
+
+        # ── Legislator profile sub-view ──────────────────────────────────────────
+        elif st.session_state.get("active_profile"):
             aptr = st.session_state.active_profile
-            
+
             def clear_prof():
-                if 'active_profile' in st.session_state:
-                    del st.session_state['active_profile']
-                    
+                st.session_state.pop("active_profile", None)
+                st.session_state.pop("active_staff_profile", None)
             st.button("⬅️ Back to Directory", on_click=clear_prof)
             st.divider()
-            
-            # Find the best match using canonical resolving
+
+            # Resolve legislator from staff_manager
             match = pd.DataFrame()
             if not leg_df.empty:
                 n_comps = normalize_name_components(aptr)
-                leg_id, rsn = resolve_legislator(leg_df, n_comps['full'], n_comps['last'], "", "")
+                leg_id, _rsn = resolve_legislator(leg_df, n_comps["full"], n_comps["last"], "", "")
                 if leg_id:
-                    match = leg_df[leg_df['legislator_id'] == leg_id]
-                
+                    match = leg_df[leg_df["legislator_id"] == leg_id]
+
             if match.empty:
                 st.info(f"Using Master Corpus profile for: {aptr}")
-                st.caption("No custom Staff Intelligence mapping found. Fetching bills from master index.")
-                l_id = None
-                l_name = aptr
-                l_party = "?"
-                l_dist = "?"
-                l_cham = "Legislator"
+                st.caption("No staff mapping found.")
+                l_id, l_name, l_party, l_dist, l_cham = None, aptr, "?", "?", "Legislator"
                 l_norm = aptr
+                l_first, l_last = "", aptr.split()[-1] if aptr.split() else aptr
             else:
-                lrow = match.iloc[0]
-                l_id = lrow.get('legislator_id')
-                l_name = lrow.get('name', 'Unknown')
-                l_party = lrow.get('party', '')
-                l_dist = lrow.get('district', '')
-                l_cham = lrow.get('chamber', '')
-                l_norm = lrow.get('normalized_name', '')
-                
-            st.subheader(f"{l_cham} {l_name} ({l_party}) — District {l_dist}")
-            t_staff, t_issue, t_bills, t_cmte, t_votes = st.tabs(["Capitol Staff", "Issue Assignments", "Sponsored Bills", "Committee Leadership", "✅ Voting History"])
-            
+                lrow  = match.iloc[0]
+                l_id  = lrow.get("legislator_id")
+                l_name  = lrow.get("name", "Unknown")
+                l_party = lrow.get("party", "")
+                l_dist  = lrow.get("district", "")
+                l_cham  = lrow.get("chamber", "")
+                l_norm  = lrow.get("normalized_name", "")
+                parts   = l_name.split()
+                l_first = parts[0] if len(parts) > 1 else ""
+                l_last  = parts[-1] if parts else l_name
+
+            # Party color
+            _party_badge = {"R": "🔴", "D": "🔵", "I": "🟡"}.get(l_party[:1].upper() if l_party else "", "⚪")
+            st.subheader(f"{_party_badge} {l_cham} {l_name} ({l_party}) — District {l_dist}")
+
+            t_staff, t_issue, t_bills, t_cmte, t_votes = st.tabs([
+                "👥 Capitol Staff", "📋 Issue Assignments", "📜 Sponsored Bills",
+                "🏛️ Committee Leadership", "🗳️ Voting History"
+            ])
+
+            # ── Capitol Staff tab ────────────────────────────────────────────────
             with t_staff:
                 if l_id:
                     staff_ls = staff_manager.get_legislator_staff(l_id)
-                    if staff_ls: st.table(pd.DataFrame(staff_ls)[['role', 'name', 'email', 'office_type']])
-                    else: st.caption("No staff loaded.")
-                else: 
-                    st.caption("No staff logic active for unmapped corpus legislators.")
-            with t_cmte:
-                if l_norm:
-                    cmte_ls = staff_manager.get_legislator_committee_matrix(l_norm)
-                    if cmte_ls: st.table(pd.DataFrame(cmte_ls))
-                    else: st.caption("No primary committee leadership mapped.")
+                    if not staff_ls:
+                        st.caption("No staff loaded for this legislator.")
+                    else:
+                        role_labels = {
+                            "chief_of_staff": "Chief of Staff", "legislative_director": "Legislative Director",
+                            "scheduler": "Scheduler", "communications": "Communications Director",
+                            "district_director": "District Director",
+                        }
+                        for s in staff_ls:
+                            s_col1, s_col2, s_col3 = st.columns([3, 2, 1])
+                            s_col1.markdown(f"**{s['name']}**  \n{role_labels.get(s['role'], s['role'])}")
+                            s_col2.caption(s.get("email") or "")
+                            if s_col3.button("View Profile →", key=f"staffbtn_{s['staff_id']}"):
+                                st.session_state.active_staff_profile = s
+                                st.rerun()
                 else:
-                    st.caption("Cannot resolve committee status.")
+                    st.caption("No staff mapping for this legislator.")
+
+            # ── Issue Assignments tab ────────────────────────────────────────────
             with t_issue:
                 if l_id:
                     iss_ls = staff_manager.get_legislator_issues(l_id)
-                    if iss_ls: st.table(pd.DataFrame(iss_ls))
-                    else: st.caption("No issues mapped.")
+                    if iss_ls:
+                        st.table(pd.DataFrame(iss_ls).rename(
+                            columns={"issue_area": "Issue Area", "staff_name": "Point of Contact"}))
+                    else:
+                        st.caption("No issues mapped.")
                 else:
-                    st.caption("No issue assignments mapped for unmapped corpus legislators.")
+                    st.caption("No issue assignments mapped for this legislator.")
+
+            # ── Sponsored Bills tab ──────────────────────────────────────────────
             with t_bills:
-                if not df.empty and l_norm and 'sponsors' in df.columns:
-                    s_bills = df[df['sponsors'].astype(str).str.lower().str.contains(str(l_norm).lower(), case=False, na=False)]
-                    if s_bills.empty: st.caption("No indexed bills found.")
-                    else: st.dataframe(s_bills[['bill_number', 'status_stage', 'title']], hide_index=True)
-            with t_votes:
-                if l_id and corpus:
+                # Search corpus first for accuracy; fall back to keyword CSV
+                s_bills = pd.DataFrame()
+                if corpus and l_name:
                     try:
-                        votes = corpus.get_votes_for_legislator(l_id)
-                        if not votes:
-                            st.info("No recorded voting history found in local dataset.")
-                        else:
-                            st.dataframe(pd.DataFrame(votes)[['vote_date', 'bill_number', 'motion', 'vote_text', 'passed', 'jurisdiction']], hide_index=True)
-                    except Exception as e:
-                        st.error(f"Error fetching voting history: {e}")
+                        s_bills = corpus.search_bills(query=l_last, limit=100)
+                        if not s_bills.empty:
+                            s_bills = s_bills[s_bills["sponsor_names"].str.contains(l_last, case=False, na=False)]
+                    except:
+                        s_bills = pd.DataFrame()
+                if s_bills.empty and not df.empty and l_norm and "sponsors" in df.columns:
+                    s_bills = df[df["sponsors"].astype(str).str.lower().str.contains(
+                        str(l_norm).lower(), case=False, na=False)]
+
+                if s_bills.empty:
+                    st.caption("No indexed bills found for this legislator.")
                 else:
-                    st.caption("Voting history is unavailable. Ensure staff mapping exists and the rolling dataset includes their votes.")
-                        
+                    st.caption(f"{len(s_bills)} bill(s) found in the corpus.")
+                    for _, brow in s_bills.iterrows():
+                        b_num = brow.get("bill_number", "")
+                        b_col1, b_col2 = st.columns([5, 1])
+                        b_col1.markdown(f"**{b_num}** — {brow.get('title','')[:90]}")
+                        b_col1.caption(f"Status: {brow.get('status_stage','')} · {brow.get('last_action_date','')[:10]}")
+                        if b_col2.button("→ View Bill", key=f"billlink_{b_num}_{l_id}"):
+                            _go_to_bill(b_num)
+                            st.rerun()
+
+            # ── Committee Leadership tab ─────────────────────────────────────────
+            with t_cmte:
+                if l_norm:
+                    cmte_ls = staff_manager.get_legislator_committee_matrix(l_norm)
+                    if cmte_ls:
+                        st.table(pd.DataFrame(cmte_ls).rename(
+                            columns={"committee": "Committee", "role": "Role", "staff_name": "Consultant"}))
+                    else:
+                        st.caption("No primary committee leadership mapped.")
+                else:
+                    st.caption("Cannot resolve committee status.")
+
+            # ── Voting History tab ───────────────────────────────────────────────
+            with t_votes:
+                if corpus:
+                    votes = []
+                    # Try via people_mapping first (most precise)
+                    if l_id:
+                        try:
+                            votes = corpus.get_votes_for_legislator(l_id)
+                        except:
+                            votes = []
+                    # Fallback: name-based lookup (works without mapping)
+                    if not votes and l_last:
+                        try:
+                            votes = corpus.get_votes_for_legislator_by_name(l_first, l_last)
+                        except:
+                            votes = []
+
+                    if not votes:
+                        st.info("No recorded voting history in local dataset. "
+                                "Ensure a corpus bootstrap has been run for the current session.")
+                    else:
+                        _vote_counts = {"Yea": 0, "Nay": 0, "NV": 0, "Absent": 0}
+                        for v in votes:
+                            _vote_counts[v.get("vote_text", "NV")] = _vote_counts.get(v.get("vote_text", "NV"), 0) + 1
+                        vc1, vc2, vc3, vc4 = st.columns(4)
+                        vc1.metric("🟢 Yea", _vote_counts.get("Yea", 0))
+                        vc2.metric("🔴 Nay", _vote_counts.get("Nay", 0))
+                        vc3.metric("⬜ NV", _vote_counts.get("NV", 0))
+                        vc4.metric("⬛ Absent", _vote_counts.get("Absent", 0))
+                        st.divider()
+                        for v in votes:
+                            _render_vote_row(v)
+                else:
+                    st.caption("Corpus offline — voting history unavailable.")
+
+            # ── Notes section ────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("#### 📝 Your Notes on this Legislator")
+            _lnotes = load_profile_notes("legislator")
+            _lnote_key = l_id or l_name
+            _current_lnote = _lnotes.get(str(_lnote_key), "")
+            _new_lnote = st.text_area("Notes", value=_current_lnote, height=130,
+                                       placeholder="Add your internal notes about this legislator...",
+                                       key=f"lnote_{_lnote_key}")
+            if st.button("💾 Save Notes", key=f"lnote_save_{_lnote_key}"):
+                _lnotes[str(_lnote_key)] = _new_lnote
+                if save_profile_notes("legislator", _lnotes):
+                    st.success("Notes saved!")
+
+        # ── Directory listing ────────────────────────────────────────────────────
         elif leg_df.empty:
             st.info("No legislators ingested yet.")
-            st.caption("Expand the '⚙️ Admin & Database Tools' menu and use the '👔 Staff Intelligence' section to Sync Live Data from Google.")
-            
-        else: # Standard Directory View
+            st.caption("Use '⚙️ Admin & Database Tools' → '👔 Staff Intelligence' to sync the live roster.")
+
+        else:
             lf_c1, lf_c2 = st.columns(2)
             with lf_c1:
                 search_leg = st.text_input("🔍 Search member name, party...", "")
             with lf_c2:
-                cham_opt = ["All"] + list(leg_df['chamber'].dropna().unique())
+                cham_opt = ["All"] + sorted(leg_df["chamber"].dropna().unique().tolist())
                 search_cham = st.selectbox("Chamber", cham_opt)
-                
-            if search_cham != "All": leg_df = leg_df[leg_df['chamber'] == search_cham]
+
+            if search_cham != "All":
+                leg_df = leg_df[leg_df["chamber"] == search_cham]
             if search_leg:
                 leg_df = leg_df[
-                    leg_df['name'].str.contains(search_leg, case=False, na=False) |
-                    leg_df['party'].str.contains(search_leg, case=False, na=False)
+                    leg_df["name"].str.contains(search_leg, case=False, na=False) |
+                    leg_df["party"].str.contains(search_leg, case=False, na=False)
                 ]
-                
+
             st.caption(f"Showing {len(leg_df)} active members.")
+            _lnotes_dir = load_profile_notes("legislator")
             for _, lrow in leg_df.iterrows():
-                l_name = lrow.get('name', 'Unknown')
-                exp_title = f"{lrow.get('chamber')} {l_name} ({lrow.get('party')})"
-                
-                col1, col2 = st.columns([4, 1])
-                col1.markdown(f"**{exp_title}**")
-                
-                # Using a callback for profile assignment
-                def go_prof(n=l_name):
+                l_name = lrow.get("name", "Unknown")
+                l_id_dir = str(lrow.get("legislator_id", l_name))
+                _party_b = {"R": "🔴", "D": "🔵", "I": "🟡"}.get(
+                    str(lrow.get("party", ""))[:1].upper(), "⚪")
+                exp_title = f"{_party_b} {lrow.get('chamber')} {l_name} ({lrow.get('party')}) — Dist {lrow.get('district','')}"
+
+                _has_note = bool(_lnotes_dir.get(l_id_dir))
+                col1, col2 = st.columns([5, 1])
+                col1.markdown(f"**{exp_title}**" + ("  📝" if _has_note else ""))
+
+                def _go_prof(n=l_name):
                     st.session_state.active_profile = n
-                    
-                col2.button("View Profile", key=f"dprof_{lrow.get('legislator_id')}", on_click=go_prof, args=(l_name,))
-            st.divider()
+                col2.button("View Profile →", key=f"dprof_{lrow.get('legislator_id')}", on_click=_go_prof, args=(l_name,))
+            st.divider()
