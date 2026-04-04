@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 from config               import DATA_DIR, API_KEY
+import auth as _auth
 from sync_github_repo     import ensure_repo, sync_with_remote as _sync_with_remote
 import threading
 def sync_with_remote():
@@ -39,14 +40,36 @@ if "repo_sync_done" not in st.session_state:
     except: pass
 
 DATA_FILE    = CSV_FILE
-TRACKED_FILE = os.path.join(DATA_DIR, "tracked_bills.json")
-NOTES_FILE   = os.path.join(DATA_DIR, "bill_notes.json")
+# NOTE: TRACKED_FILE, NOTES_FILE, VIEWS_FILE and UPLOAD_DIR are resolved
+# per-user below, after authentication. Placeholders here for reference only;
+# they are overwritten after the auth wall.
+TRACKED_FILE = os.path.join(DATA_DIR, "tracked_bills.json")   # overwritten post-auth
+NOTES_FILE   = os.path.join(DATA_DIR, "bill_notes.json")       # overwritten post-auth
 EXPORT_FILE  = os.path.join(DATA_DIR, "Tracked_Bills_Export.csv")
-VIEWS_FILE   = os.path.join(DATA_DIR, "saved_views.json")
-UPLOAD_DIR   = os.path.join(DATA_DIR, "uploads")
+VIEWS_FILE   = os.path.join(DATA_DIR, "saved_views.json")      # overwritten post-auth
+UPLOAD_DIR   = os.path.join(DATA_DIR, "uploads")               # overwritten post-auth
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 st.set_page_config(page_title="SCCA Bill Tracker", layout="wide")
+
+# ─── Authentication wall ──────────────────────────────────────────────────────
+# render_auth_page() returns True if already logged in, otherwise renders the
+# login/register UI and we must stop here.
+if not _auth.render_auth_page():
+    st.stop()
+
+_current_user     = _auth.get_current_user()          # {username, role, api_key, is_guest}
+_username         = _current_user["username"]
+
+# Guests use the shared DATA_DIR (original single-user behaviour).
+# Registered users get their own subdirectory.
+if _auth.is_guest():
+    _user_data_dir = DATA_DIR
+else:
+    _user_data_dir = _auth.get_user_data_dir(_username)
+
+# Per-user API key: use theirs if set, otherwise fall back to global config key
+_effective_api_key = _current_user.get("api_key") or API_KEY
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 US_STATES = {
@@ -652,16 +675,25 @@ def get_staff_manager():
         return None
 
 @st.cache_resource
-def get_corpus_manager():
+def get_corpus_manager(api_key: str = ""):
+    """CorpusManager keyed on api_key so a per-user key gets its own instance."""
     if not _CORPUS_AVAILABLE: return None
-    try: return _CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
+    effective_key = api_key or API_KEY
+    try: return _CorpusManager(os.path.join(DATA_DIR, "bills.db"), effective_key)
     except Exception as _ce:
         logger.warning(f"CorpusManager init failed (non-fatal): {_ce}")
         return None
 
-job_manager = get_job_manager()
+# ── Resolve per-user file paths now that we are authenticated ──────────────────
+TRACKED_FILE = os.path.join(_user_data_dir, "tracked_bills.json")
+NOTES_FILE   = os.path.join(_user_data_dir, "bill_notes.json")
+VIEWS_FILE   = os.path.join(_user_data_dir, "saved_views.json")
+UPLOAD_DIR   = os.path.join(_user_data_dir, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+job_manager   = get_job_manager()
 staff_manager = get_staff_manager()
-corpus = get_corpus_manager()
+corpus        = get_corpus_manager(_effective_api_key)
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -669,6 +701,24 @@ corpus = get_corpus_manager()
 # UNIFIED SIDEBAR COMMAND CENTER 
 # ═══════════════════════════════════════════════════════════════════════════════
 st.sidebar.title("🏛️ SCCA Bill Tracker")
+
+# ── User info & logout ────────────────────────────────────────────────────────
+if _auth.is_guest():
+    _role_badge = "👁️ Guest"
+elif _auth.is_admin():
+    _role_badge = "👑 Admin"
+else:
+    _role_badge = "👤 User"
+st.sidebar.caption(f"{_role_badge} — **{_username}**")
+_signout_label = "🔐 Sign In / Register" if _auth.is_guest() else "🚪 Sign Out"
+if st.sidebar.button(_signout_label, use_container_width=True):
+    _auth.logout()
+    st.rerun()
+
+# Account settings (password + API key)
+_auth.render_account_settings_sidebar()
+
+st.sidebar.divider()
 
 # ── A. SEARCH & MODE (Always Visible) ─────────────────────────────────────────
 global_search = st.sidebar.text_input(
@@ -881,188 +931,197 @@ if "⭐ Tracked Bills" in app_mode:
 # ── F. ADMIN / DATA TOOLS (Expander) ──────────────────────────────────────────
 st.sidebar.divider()
 with st.sidebar.expander("⚙️ Admin & Database Tools"):
-    
-    st.header("📊 System Status")
-    if job_manager:
-        r_jobs = job_manager.get_recent_jobs(1)
-        st.caption(f"Last Job: {r_jobs[0]['job_type']} ({r_jobs[0]['status']})" if r_jobs else "Last Job: None")
-        running_jobs = job_manager.get_running_jobs()
-        if running_jobs:
-            st.warning(f"⚠️ {len(running_jobs)} job(s) currently running!")
-            
-    st.write(f"⏱️ **Last Render Time:** {st.session_state.get('last_render_ms', 0):.0f} ms")
-    if corpus:
-        c_stats = corpus.get_corpus_stats()
-        st.write(f"Corpus Size: {c_stats['total_bills']:,} bills")
-        try:
-            m_stats = corpus.get_people_mapping_stats()
-            st.write(f"**LegiScan Person Matches:** {m_stats['matched']} matched / {m_stats['unmatched']} unmatched (Total: {m_stats['total']})")
-            if st.button("🔄 Auto-Map LegiScan Names to Roster"):
-                if staff_manager:
-                    res = corpus.sync_people_mapping(staff_manager.get_all_legislators())
-                    st.success(f"Matched {res['matched']}, Unmatched {res['unmatched']} out of {res['total']}")
-                    st.rerun()
-        except: pass
-        
-        st.divider()
-        st.header("🛠️ Diagnostic Tools")
-        if st.button("📊 Vote-Person Pipeline Diagnostics"):
-            st.session_state.show_diagnostics = not st.session_state.get("show_diagnostics", False)
-            
-        if st.session_state.get("show_diagnostics", False):
-            st.info("Gathering database forensics...")
-            conn = corpus._get_conn()
-            db_stats = {
-                "roll_calls": conn.execute("SELECT COUNT(*) FROM roll_calls").fetchone()[0],
-                "leg_votes": conn.execute("SELECT COUNT(*) FROM legislator_votes").fetchone()[0],
-                "people_total": conn.execute("SELECT COUNT(*) FROM people").fetchone()[0],
-                "people_unknown": conn.execute("SELECT COUNT(*) FROM people WHERE name LIKE '%Unknown Profile%'").fetchone()[0],
-                "people_mapped": conn.execute("SELECT COUNT(*) FROM people_mapping").fetchone()[0]
-            }
-            st.write(f"**Roll Calls Stored:** {db_stats['roll_calls']:,}")
-            st.write(f"**Individual Votes Stored:** {db_stats['leg_votes']:,}")
-            st.write(f"**People Profiles Extracted:** {db_stats['people_total']:,}")
-            st.write(f"**Profiles Missing Name (ID Only):** {db_stats['people_unknown']:,}")
-            st.write(f"**Profiles Mapped to Staff Roster:** {db_stats['people_mapped']:,}")
-            
-            st.caption("Recent Failed Name Extracts & Fallbacks:")
-            sample = conn.execute("SELECT people_id, name, party FROM people WHERE name LIKE '%Unknown Profile%' LIMIT 10").fetchall()
-            if sample:
-                st.dataframe(pd.DataFrame([dict(s) for s in sample]), use_container_width=True)
-            else:
-                st.success("No recent unknowns!")
-            
-    st.divider()
-
-    st.header("👔 Staff Intelligence")
-    live_sources = [{
-        "label": "Live Capitol Matrix",
-        "type": "google_sheet_live",
-        "url": "https://docs.google.com/spreadsheets/d/1gFeGy72R_-FSFrjXbKCAAvVsvNjyV7t_TUvFoB12vys/export?format=xlsx",
-        "enabled": True,
-        "state": "CA",
-        "chamber": "Both"
-    }]
-    
-    if live_sources and staff_manager:
-        prim = live_sources[0]
-        st.write(f"Source: **{prim['label']}**")
-        if st.button("🔄 Sync Live Capitol Matrix", type="primary", use_container_width=True):
-            with st.spinner("Downloading live Google Sheet..."):
-                ok, res = staff_manager.sync_live_sheet(prim['url'], DATA_DIR, prim.get('state', 'CA'))
-                if ok:
-                    st.session_state.sync_warnings = res.get('warnings', [])
-                    if corpus:
-                        try: corpus.sync_people_mapping(staff_manager.get_all_legislators())
-                        except: pass
-                    st.success("Synced gracefully!")
-                    st.rerun()
-                else: 
-                    st.error(f"Failed: {res}")
-                    
-        if st.session_state.get('sync_warnings'):
-            for w in st.session_state.sync_warnings:
-                st.warning(f"Pipeline Sanity Check: {w}")
-                
-        last_job = staff_manager.get_last_import_job()
-        if last_job:
-            st.caption(f"Last Sync: {last_job['timestamp'][:16].replace('T', ' ')}")
-            
-        with st.expander("Or upload manual replacement"):
-            staff_file = st.file_uploader("Assy & Senate Roster (.xlsx)", type=['xlsx'], key="staff_override")
-            if staff_file and st.button("Ingest Uploaded File"):
-                with st.spinner("Processing..."):
-                    tmp_path = os.path.join(DATA_DIR, "temp_staff.xlsx")
-                    with open(tmp_path, "wb") as f: f.write(staff_file.getbuffer())
-                    staff_manager.ingest_spreadsheet(tmp_path)
-                    st.rerun()
+    if not _auth.is_admin():
+        st.warning("🔒 Admin access required.")
+        st.caption("Contact your administrator to request admin privileges.")
     else:
-        st.caption("Upload a structured legislative staff roster.")
-        staff_file = st.file_uploader("Assy & Senate Roster (.xlsx)", type=['xlsx'])
-        if staff_file and staff_manager:
-            if st.button("Ingest Staff Hierarchy", type="primary", use_container_width=True):
-                with st.spinner("Extracting roles and issue domains..."):
-                    tmp_path = os.path.join(DATA_DIR, "temp_staff.xlsx")
-                    with open(tmp_path, "wb") as f:
-                        f.write(staff_file.getbuffer())
-                    success, results = staff_manager.ingest_spreadsheet(tmp_path)
-                    if success:
-                        st.success(f"Ingested! Processed: {results['processed']}, Unmatched: {results['unmatched']}")
+        # ── User Management ──────────────────────────────────────────────────
+        _auth.render_admin_user_management()
+        st.divider()
+
+        st.header("📊 System Status")
+        if job_manager:
+            r_jobs = job_manager.get_recent_jobs(1)
+            st.caption(f"Last Job: {r_jobs[0]['job_type']} ({r_jobs[0]['status']})" if r_jobs else "Last Job: None")
+            running_jobs = job_manager.get_running_jobs()
+            if running_jobs:
+                st.warning(f"⚠️ {len(running_jobs)} job(s) currently running!")
+
+        st.write(f"⏱️ **Last Render Time:** {st.session_state.get('last_render_ms', 0):.0f} ms")
+        if corpus:
+            c_stats = corpus.get_corpus_stats()
+            st.write(f"Corpus Size: {c_stats['total_bills']:,} bills")
+            try:
+                m_stats = corpus.get_people_mapping_stats()
+                st.write(f"**LegiScan Person Matches:** {m_stats['matched']} matched / {m_stats['unmatched']} unmatched (Total: {m_stats['total']})")
+                if st.button("🔄 Auto-Map LegiScan Names to Roster"):
+                    if staff_manager:
+                        res = corpus.sync_people_mapping(staff_manager.get_all_legislators())
+                        st.success(f"Matched {res['matched']}, Unmatched {res['unmatched']} out of {res['total']}")
+                        st.rerun()
+            except: pass
+
+            st.divider()
+            st.header("🛠️ Diagnostic Tools")
+            if st.button("📊 Vote-Person Pipeline Diagnostics"):
+                st.session_state.show_diagnostics = not st.session_state.get("show_diagnostics", False)
+
+            if st.session_state.get("show_diagnostics", False):
+                st.info("Gathering database forensics...")
+                conn = corpus._get_conn()
+                db_stats = {
+                    "roll_calls":     conn.execute("SELECT COUNT(*) FROM roll_calls").fetchone()[0],
+                    "leg_votes":      conn.execute("SELECT COUNT(*) FROM legislator_votes").fetchone()[0],
+                    "people_total":   conn.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+                    "people_unknown": conn.execute("SELECT COUNT(*) FROM people WHERE name LIKE '%Unknown Profile%'").fetchone()[0],
+                    "people_mapped":  conn.execute("SELECT COUNT(*) FROM people_mapping").fetchone()[0],
+                }
+                st.write(f"**Roll Calls Stored:** {db_stats['roll_calls']:,}")
+                st.write(f"**Individual Votes Stored:** {db_stats['leg_votes']:,}")
+                st.write(f"**People Profiles Extracted:** {db_stats['people_total']:,}")
+                st.write(f"**Profiles Missing Name (ID Only):** {db_stats['people_unknown']:,}")
+                st.write(f"**Profiles Mapped to Staff Roster:** {db_stats['people_mapped']:,}")
+
+                st.caption("Recent Failed Name Extracts & Fallbacks:")
+                sample = conn.execute("SELECT people_id, name, party FROM people WHERE name LIKE '%Unknown Profile%' LIMIT 10").fetchall()
+                if sample:
+                    st.dataframe(pd.DataFrame([dict(s) for s in sample]), use_container_width=True)
+                else:
+                    st.success("No recent unknowns!")
+
+        st.divider()
+
+        st.header("👔 Staff Intelligence")
+        live_sources = [{
+            "label": "Live Capitol Matrix",
+            "type": "google_sheet_live",
+            "url": "https://docs.google.com/spreadsheets/d/1gFeGy72R_-FSFrjXbKCAAvVsvNjyV7t_TUvFoB12vys/export?format=xlsx",
+            "enabled": True,
+            "state": "CA",
+            "chamber": "Both"
+        }]
+
+        if live_sources and staff_manager:
+            prim = live_sources[0]
+            st.write(f"Source: **{prim['label']}**")
+            if st.button("🔄 Sync Live Capitol Matrix", type="primary", use_container_width=True):
+                with st.spinner("Downloading live Google Sheet..."):
+                    ok, res = staff_manager.sync_live_sheet(prim['url'], DATA_DIR, prim.get('state', 'CA'))
+                    if ok:
+                        st.session_state.sync_warnings = res.get('warnings', [])
+                        if corpus:
+                            try: corpus.sync_people_mapping(staff_manager.get_all_legislators())
+                            except: pass
+                        st.success("Synced gracefully!")
+                        st.rerun()
                     else:
-                        st.error(f"Ingestion failed: {results}")
-    st.divider()
+                        st.error(f"Failed: {res}")
 
-    st.header("🔄 Keyword Rescan")
-    st.caption("Scans the API for bills mentioning monitored keywords.")
-    _rescan_states = st.multiselect(
-        "States", options=sorted(US_STATES.values()),
-        default=["California"], key="rescan_states"
-    )
-    _rescan_federal = st.checkbox("Include Federal", value=True, key="rescan_federal")
-    
-    _lock_rescan = bool(running_jobs and any(_j['job_type'] == 'keyword_rescan' for _j in running_jobs))
-    if st.button("▶️ Run Keyword Rescan", key="run_rescan", disabled=_lock_rescan):
-        if not _rescan_states and not _rescan_federal:
-            st.warning("Select at least one jurisdiction.")
+            if st.session_state.get('sync_warnings'):
+                for w in st.session_state.sync_warnings:
+                    st.warning(f"Pipeline Sanity Check: {w}")
+
+            last_job = staff_manager.get_last_import_job()
+            if last_job:
+                st.caption(f"Last Sync: {last_job['timestamp'][:16].replace('T', ' ')}")
+
+            with st.expander("Or upload manual replacement"):
+                staff_file = st.file_uploader("Assy & Senate Roster (.xlsx)", type=['xlsx'], key="staff_override")
+                if staff_file and st.button("Ingest Uploaded File"):
+                    with st.spinner("Processing..."):
+                        tmp_path = os.path.join(DATA_DIR, "temp_staff.xlsx")
+                        with open(tmp_path, "wb") as f: f.write(staff_file.getbuffer())
+                        staff_manager.ingest_spreadsheet(tmp_path)
+                        st.rerun()
         else:
-            with st.spinner("Scanning bills by keyword…"):
-                try:
-                    _sc2nc = {v: k for k, v in US_STATES.items()}
-                    _api_states = [_sc2nc.get(s, s) for s in _rescan_states]
-                    if _rescan_federal:
-                        _api_states.append("US")
-                    stats = run_rescan_job(corpus, list(set(_api_states)), DATA_DIR, job_manager, initiated_by="ui")
-                    sync_with_remote()
-                    load_data.clear()
-                    st.success("Rescan completed!")
+            st.caption("Upload a structured legislative staff roster.")
+            staff_file = st.file_uploader("Assy & Senate Roster (.xlsx)", type=['xlsx'])
+            if staff_file and staff_manager:
+                if st.button("Ingest Staff Hierarchy", type="primary", use_container_width=True):
+                    with st.spinner("Extracting roles and issue domains..."):
+                        tmp_path = os.path.join(DATA_DIR, "temp_staff.xlsx")
+                        with open(tmp_path, "wb") as f:
+                            f.write(staff_file.getbuffer())
+                        success, results = staff_manager.ingest_spreadsheet(tmp_path)
+                        if success:
+                            st.success(f"Ingested! Processed: {results['processed']}, Unmatched: {results['unmatched']}")
+                        else:
+                            st.error(f"Ingestion failed: {results}")
+        st.divider()
+
+        st.header("🔄 Keyword Rescan")
+        st.caption("Scans the API for bills mentioning monitored keywords.")
+        _rescan_states = st.multiselect(
+            "States", options=sorted(US_STATES.values()),
+            default=["California"], key="rescan_states"
+        )
+        _rescan_federal = st.checkbox("Include Federal", value=True, key="rescan_federal")
+
+        _running_jobs_for_lock = job_manager.get_running_jobs() if job_manager else []
+        _lock_rescan = bool(_running_jobs_for_lock and any(_j['job_type'] == 'keyword_rescan' for _j in _running_jobs_for_lock))
+        if st.button("▶️ Run Keyword Rescan", key="run_rescan", disabled=_lock_rescan):
+            if not _rescan_states and not _rescan_federal:
+                st.warning("Select at least one jurisdiction.")
+            else:
+                with st.spinner("Scanning bills by keyword…"):
+                    try:
+                        _sc2nc = {v: k for k, v in US_STATES.items()}
+                        _api_states = [_sc2nc.get(s, s) for s in _rescan_states]
+                        if _rescan_federal:
+                            _api_states.append("US")
+                        run_rescan_job(corpus, list(set(_api_states)), DATA_DIR, job_manager, initiated_by=_username)
+                        sync_with_remote()
+                        load_data.clear()
+                        st.success("Rescan completed!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Rescan failed: {e}")
+
+        st.divider()
+        st.header("📚 Master Corpus Tasks")
+        st.caption("Synchronizes entire session bill details to local SQLite.")
+        if corpus:
+            _cached_sessions = corpus.get_cached_sessions()
+            _session_opts = {f"{s['jurisdiction']} — {s['session_name']}": s for s in _cached_sessions}
+
+            if st.button("🔍 Discover Target Sessions", key="corpus_discover"):
+                with st.spinner("Discovering..."):
+                    corpus.get_active_sessions("CA")
+                    corpus.get_active_sessions("US")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Rescan failed: {e}")
 
-    st.divider()
-    st.header("📚 Master Corpus Tasks")
-    st.caption("Synchronizes entire session bill details to local SQLite.")
-    if corpus:
-        _cached_sessions = corpus.get_cached_sessions()
-        _session_opts = {f"{s['jurisdiction']} — {s['session_name']}": s for s in _cached_sessions}
-        
-        if st.button("🔍 Discover Target Sessions", key="corpus_discover"):
-            with st.spinner("Discovering..."):
-                corpus.get_active_sessions("CA")
-                corpus.get_active_sessions("US")
+            _sel_label   = st.selectbox("Session", options=list(_session_opts.keys()) if _session_opts else ["(none)"], key="corpus_session_select")
+            _sel_session = _session_opts.get(_sel_label)
+
+            st.markdown("**Incremental Refresh** (cheap, periodic)")
+            _lock_refresh = bool(_running_jobs_for_lock and any(_j['job_type'] == 'incremental_refresh' for _j in _running_jobs_for_lock))
+            if st.button("🔄 Refresh Session Updates", key="corpus_refresh", disabled=not _sel_session or _lock_refresh):
+                _rb = st.progress(0, text="Refreshing...")
+                run_refresh_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _rb.progress(min(f, 1.0), text=m))
+                _rb.progress(1.0, text="Done")
                 st.rerun()
-                
-        _sel_label = st.selectbox("Session", options=list(_session_opts.keys()) if _session_opts else ["(none)"], key="corpus_session_select")
-        _sel_session = _session_opts.get(_sel_label)
-        
-        st.markdown("**Incremental Refresh** (cheap, periodic)")
-        _lock_refresh = bool(running_jobs and any(_j['job_type'] == 'incremental_refresh' for _j in running_jobs))
-        if st.button("🔄 Refresh Session Updates", key="corpus_refresh", disabled=not _sel_session or _lock_refresh):
-            _rb = st.progress(0, text="Refreshing...")
-            run_refresh_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _rb.progress(min(f, 1.0), text=m))
-            _rb.progress(1.0, text="Done")
-            st.rerun()
-            
-        st.markdown("**Bulk Bootstrap** (expensive, initial load)")
-        _lock_boot = bool(running_jobs and any(_j['job_type'] == 'bootstrap_corpus' for _j in running_jobs))
-        _confirm_boot = st.checkbox("I understand Bootstrap takes several minutes", key="confirm_boot")
-        if st.button("⬇️ Execute Bootstrap Dump", key="corpus_bootstrap", disabled=not (_sel_session and _confirm_boot) or _lock_boot):
-            _pb = st.progress(0, text="Bootstrapping...")
-            run_bootstrap_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _pb.progress(min(f, 1.0), text=m))
-            _pb.progress(1.0, text="Done")
-            st.rerun()
 
-    st.divider()
-    st.header("📋 Recent Jobs Log")
-    if job_manager:
-        recent = job_manager.get_recent_jobs(5)
-        if recent:
-            for j in recent:
-                icon = "✅" if j['status'] == 'SUCCESS' else ("❌" if j['status'] == 'FAILED' else "🔄")
-                st.write(f"{icon} **{j['job_type']}** ({j['jurisdiction']})")
-                st.caption(f"Elapsed: {j['duration_sec'] or 0:.1f}s · Added: {j['new_items']} · Updated: {j['updated_items']}")
-        else:
-            st.caption("No jobs logged yet.")
+            st.markdown("**Bulk Bootstrap** (expensive, initial load)")
+            _lock_boot    = bool(_running_jobs_for_lock and any(_j['job_type'] == 'bootstrap_corpus' for _j in _running_jobs_for_lock))
+            _confirm_boot = st.checkbox("I understand Bootstrap takes several minutes", key="confirm_boot")
+            if st.button("⬇️ Execute Bootstrap Dump", key="corpus_bootstrap", disabled=not (_sel_session and _confirm_boot) or _lock_boot):
+                _pb = st.progress(0, text="Bootstrapping...")
+                run_bootstrap_job(corpus, _sel_session["session_id"], _sel_session["jurisdiction"], job_manager, lambda f, m: _pb.progress(min(f, 1.0), text=m))
+                _pb.progress(1.0, text="Done")
+                st.rerun()
+
+        st.divider()
+        st.header("📋 Recent Jobs Log")
+        if job_manager:
+            recent = job_manager.get_recent_jobs(5)
+            if recent:
+                for j in recent:
+                    icon = "✅" if j['status'] == 'SUCCESS' else ("❌" if j['status'] == 'FAILED' else "🔄")
+                    st.write(f"{icon} **{j['job_type']}** ({j['jurisdiction']})")
+                    st.caption(f"Elapsed: {j['duration_sec'] or 0:.1f}s · Added: {j['new_items']} · Updated: {j['updated_items']}")
+            else:
+                st.caption("No jobs logged yet.")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN CONTENT / WORKSPACE
