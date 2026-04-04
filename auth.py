@@ -1,5 +1,5 @@
 """
-auth.py  —  Multi-user authentication for SCCA Bill Tracker
+auth.py  —  Multi-user authentication for UFtW Bill Tracker
 ============================================================
 Design principles:
   - Open self-registration: anyone can create an account.
@@ -218,14 +218,14 @@ def render_auth_page() -> bool:
     if get_current_user() is not None:
         return True
 
-    st.set_page_config(page_title="SCCA Bill Tracker — Sign In", layout="centered")
+    st.set_page_config(page_title="UFtW Bill Tracker — Sign In", layout="centered")
 
     # ── Branding header ──────────────────────────────────────────────────────
     st.markdown(
         """
         <div style='text-align:center; padding: 2rem 0 1rem;'>
             <span style='font-size:3rem;'>🏛️</span>
-            <h1 style='margin:0; font-size:2rem;'>SCCA Bill Tracker</h1>
+            <h1 style='margin:0; font-size:2rem;'>UFtW Bill Tracker</h1>
             <p style='color:#888; margin-top:.25rem;'>Track legislation under your own profile</p>
         </div>
         """,

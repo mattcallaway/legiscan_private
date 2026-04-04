@@ -1,207 +1,121 @@
-## SCCA Bill Tracker
+# 🏛️ Unfuck The World (UFtW) Bill Tracker
 
-A Streamlit application for tracking, filtering, annotating, and exporting state and federal legislative bills using LegiScan data.
+The UFtW Bill Tracker is a high-performance legislative intelligence platform designed to bridge the gap between official bill data and community action. It provides a multi-user, profile-driven experience for tracking and analyzing California and Federal legislation.
 
----
-
-### Table of Contents
-
-1. Features  
-2. Prerequisites  
-3. Installation  
-4. Configuration  
-5. Usage  
-6. Data Files & Structure  
-7. Application Flow  
-8. Customization  
-9. Development & Contribution  
-10. License  
+## 🚀 Mission
+To provide advocates, policy wonks, and active citizens with the tools to "unfuck the world" by making complex legislative data transparent, searchable, and actionable.
 
 ---
 
-### Features
+## 🗺️ Technical Architecture (Tech Map)
 
-- **Interactive Dashboard**  
-  Displays total bills, tracked bills, high-priority counts, support/oppose metrics, and jurisdiction breakdowns.
+The system is built as a multi-layered Python application using **Streamlit** for the frontend, **SQLite** for performance-indexed data, and **LegiScan API** for official source data.
 
-- **Full-Text Search**  
-  Search across bill number, title, sponsors, description, and committees.
+```mermaid
+graph TD
+    %% Source Layer
+    subgraph "External Sources"
+        LS[LegiScan API]
+        CM[Capitol Matrix Google Sheet]
+        GH[GitHub Research Repo]
+    end
 
-- **Rich Filtering**  
-  – Jurisdiction (Federal vs State vs Unknown)  
-  – Specific states or federal chamber  
-  – Keyword categories (e.g. “climate”, “water”)  
-  – Status stage, sponsors, committees  
-  – Position (Support, Oppose, Watch) and Priority (High, Medium, Low)  
-  – Introduction date range.
+    %% Data Processing Layer
+    subgraph "UFtW Backend (Python)"
+        CMGR[Corpus Manager]
+        SMGR[Staff Manager]
+        JMGR[Job Manager]
+        AUTH[Auth System]
+    end
 
-- **Tracking & Notes**  
-  – Mark/unmark bills for tracking (stored in `tracked_bills.json`).  
-  – Attach comments, related links, PDF uploads, and set position/priority.
+    %% Storage Layer
+    subgraph "Persistent Storage (SQLite/JSON)"
+        BDB[(bills.db)]
+        SDB[(staff.db)]
+        UDB[(users.json)]
+        NDB[(profile_notes.json)]
+    end
 
-- **Rescan & Update**  
-  Pulls the latest CSV data via an external LegiScan script (`legiscan_comprehensive_tracker.py`).
+    %% Interaction Layer
+    subgraph "Frontend (Streamlit)"
+        UI[Main App Interface]
+        ADM[Admin Dashboard]
+    end
 
-- **GitHub Sync**  
-  Automatically clones/pulls and commits changes to a remote repo (`legiscan_storage`) via `sync_github_repo.py`.
-
-- **Export**  
-  Download tracked bills as CSV.
-
----
-
-### Prerequisites
-
-- **Python 3.8+**  
-- **Git** installed and configured  
-- **Pip** or **Poetry** for package management  
-
----
-
-### Installation
-
-```bash
-# Clone your fork of this repository (or add it via your own remote):
-git clone https://github.com/your-org/legiscan_tracker.git
-cd legiscan_tracker
-
-# Install dependencies:
-pip install streamlit pandas
+    %% Flows
+    LS -- "getDataset / getBill" --> CMGR
+    CMGR -- "Upsert Master Corpus" --> BDB
+    CM -- "Sync Live Matrix" --> SMGR
+    SMGR -- "Ingest Roster/Issues" --> SDB
+    GH -- "Sync Git Repo" --> JMGR
+    
+    AUTH -- "User State" --> UDB
+    AUTH -- "User Intelligence" --> NDB
+    
+    UI --> AUTH
+    UI -- "Query Intelligence" --> CMGR
+    UI -- "Query Profiles" --> SMGR
+    ADM -- "Trigger Boostraps" --> JMGR
 ```
 
 ---
 
-### Configuration
+## 🛠️ Key Components
 
-1. **Repository Sync**  
-   By default, data is stored/cloned under your Documents folder:  
-   - Windows: `%USERPROFILE%\Documents\legiscan_storage`  
-   - macOS/Linux: `~/Documents/legiscan_storage`  
-   (Override by editing `DEFAULT_PATHS` in `sync_github_repo.py`.)
+### 1. Master Bill Corpus (`corpus_manager.py`)
+- **Layer A Architecture**: Syncs the *entire* legislative session to a local SQLite database (`bills.db`).
+- **Performance**: Instant full-text searching across thousands of bills without hitting API rate limits during browsing.
+- **Incremental Refresh**: Automatically checks for `change_hash` updates to keep local records current.
 
-2. **GitHub Repository**  
-   Update `REPO_URL` in `sync_github_repo.py` to point to your own storage repo if needed.
+### 2. Staff & Issue Intelligence (`staff_manager.py`)
+- **Capitol Matrix Integration**: Ingests live Google Sheets containing staff rosters, issue assignments, and committee leadership.
+- **Relational Linking**: Cross-references staff names against the bill corpus to identify lobbyists or consultants associated with specific bills.
 
-3. **Data Files**  
-   Ensure the storage repo contains:  
-   - `LegiScan_Enhanced_Full_Tracker.csv` (master data)  
-   - `tracked_bills.json` (list of bill numbers you’re tracking)  
-   - `keywords.json` (list of keyword filters)  
-   - `bill_notes.json` (per-bill notes, comments, links, uploads)
+### 3. Multi-User Authentication (`auth.py`)
+- **Self-Service Registration**: Anyone can create an account to start tracking.
+- **Privacy**: Tracked bills, saved views, and internal notes are isolated per user.
+- **Admin Control**: System administrators can manage users and trigger global data syncs.
+
+### 4. Background Job Management (`job_manager.py`)
+- **Job Decoupling**: Large data operations (like "Bootstrapping" 20k+ bills) run in the background with a visual progress tracker.
+- **Automation**: Includes support for cron-based weekly syncs.
 
 ---
 
-### Usage
+## 🏁 Quick Start
 
+### 1. Prerequisites
+- Python 3.10+
+- A LegiScan API Key ([Get one here](https://legiscan.com/legiscan))
+
+### 2. Installation
 ```bash
-# From the project root:
-streamlit run legiscan_git_sync_update_4.py
+git clone https://github.com/mattcallaway/legiscan_private.git
+cd legiscan_private
+pip install -r requirements.txt
 ```
 
-- The sidebar lets you:
-  - **Add New Keyword** → updates `keywords.json`  
-  - **Rescan** → runs `legiscan_comprehensive_tracker.py` to refresh CSV  
-  - **Toggle “Show All Tracked Bills”**  
-  - Set filters by jurisdiction, states, federal chamber, keywords, status, sponsors, committees, position, priority, introduced date.
+### 3. Configuration
+Create a `config.json` in the root directory:
+```json
+{
+  "repo_dir": "./research",
+  "data_dir": "./data",
+  "api_key": "YOUR_LEGISCAN_API_KEY"
+}
+```
 
-- The main view presents:
-  - **Dashboard** cards and charts  
-  - **All Bills** tab (with expandable bill details and saveable notes)  
-  - **Tracked Bills** tab (for quick access/export/removal)
-
----
-
-### Data Files & Structure
-
-- **`LegiScan_Enhanced_Full_Tracker.csv`**  
-  Rows of bills with columns like `bill_number`, `title`, `sponsors`, `description`, `status_stage`, `last_action_date`, etc.
-
-- **`tracked_bills.json`**  
-  JSON array of bill numbers you’ve marked for tracking. Example:  
-  ```json
-  ["AB1243", "SB94", "AB663"]
-  ```
-
-- **`keywords.json`**  
-  List of strings used for keyword filtering (default includes climate, water, PFAS, etc.)
-
-- **`bill_notes.json`**  
-  Object mapping bill numbers to note objects:
-  ```json
-  {
-    "AB1234": {
-        "comment": "Key environmental bill",
-        "links": ["https://..."],
-        "files": ["upload1.pdf"],
-        "position": "Support",
-        "priority": "High"
-    }
-  }
-  ```
-
-- **`Tracked_Bills_Export.csv`**  
-  Generated on-demand CSV of tracked bills.
+### 4. Run the App
+```bash
+streamlit run legiscan_git_sync_update_8_7.py
+```
 
 ---
 
-### Application Flow
-
-1. **Startup**  
-   - Clone/pull storage repo (`ensure_repo()`)  
-   - Load CSV, keywords, tracked list, and notes with caching and error handling.
-
-2. **Dashboard Rendering**  
-   - Metrics (total, tracked, high priority, support count, federal count)  
-   - Charts for jurisdiction breakdown, status, tracked positions.
-
-3. **Search & Filters**  
-   - Full-text search  
-   - Sidebar filters applied to the DataFrame.
-
-4. **Bill Detail & Annotation**  
-   - Expand each bill to view metadata, summary, link to history  
-   - Add/edit comments, links, position, priority, and upload PDFs  
-   - Save back to `bill_notes.json` and push changes
-
-5. **Tracking Controls**  
-   - Toggle bills in/out of `tracked_bills.json`  
-   - Export tracked bills list  
-   - Remove selected tracked bills.
+## 📋 Administration
+1. **Bootstrap**: Go to **Admin Tools** and run a "Bulk Bootstrap" for the current session (e.g., CA 2023-2024).
+2. **Staff Sync**: Run "Sync Live Capitol Matrix" to ingest the latest staff roster.
+3. **People Mapping**: Use the "Auto-Map" tool to link LegiScan IDs to your local staff database for voting history accuracy.
 
 ---
-
-### Customization
-
-- **Add New Filters**  
-  Extend `search_bills()` or sidebar filter blocks in `legiscan_git_sync_update_4.py`.
-
-- **Styling**  
-  Modify Streamlit layout (e.g., `st.set_page_config`) and column arrangements.
-
-- **Data Pipeline**  
-  Replace or extend `legiscan_comprehensive_tracker.py` for custom data ingestion.
-
----
-
-### Development & Contribution
-
-- **Code Style**  
-  – Follow PEP8 for Python modules.  
-  – Log via Python’s `logging` module for consistency.
-
-- **Testing**  
-  Add unit tests for data-loading and filter logic (e.g., in `load_data()`, `search_bills()`).
-
-- **Issues & PRs**  
-  - Fork the repo and open a pull request.  
-  - Please document any new config options or data-format changes.
-
----
-
-### License
-
-MIT License – see [LICENSE](LICENSE) file for details.
-
----
-
-*Happy tracking!*
+*Created by the UFtW Team to empower legislative transparency.*

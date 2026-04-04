@@ -50,7 +50,7 @@ VIEWS_FILE   = os.path.join(DATA_DIR, "saved_views.json")      # overwritten pos
 UPLOAD_DIR   = os.path.join(DATA_DIR, "uploads")               # overwritten post-auth
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-st.set_page_config(page_title="SCCA Bill Tracker", layout="wide")
+st.set_page_config(page_title="UFtW Bill Tracker", layout="wide")
 
 # ─── Authentication wall ──────────────────────────────────────────────────────
 # render_auth_page() returns True if already logged in, otherwise renders the
@@ -731,7 +731,7 @@ corpus        = get_corpus_manager(_effective_api_key)
 # ═══════════════════════════════════════════════════════════════════════════════
 # UNIFIED SIDEBAR COMMAND CENTER 
 # ═══════════════════════════════════════════════════════════════════════════════
-st.sidebar.title("🏛️ SCCA Bill Tracker")
+st.sidebar.title("🏛️ UFtW Bill Tracker")
 
 # ── User info & logout ────────────────────────────────────────────────────────
 if _auth.is_guest():
@@ -1157,7 +1157,7 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN CONTENT / WORKSPACE
 # ═══════════════════════════════════════════════════════════════════════════════
-st.title("🏛️ SCCA Bill Tracker")
+st.title("🏛️ Unfuck The World Bill Tracker")
 # We will invoke run_smart_header later dynamically inside each mode (All Bills, Keyword Matches, Tracked Bills) because we need the final df_count AFTER filters!
 
 st.divider()
