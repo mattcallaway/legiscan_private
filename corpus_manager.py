@@ -51,10 +51,12 @@ import os
 import sqlite3
 import time
 import zipfile
+from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from threading import local
+from hashlib import sha256
+from threading import Lock, local
 from typing import Callable, Optional
 
 import requests
@@ -289,6 +291,23 @@ CREATE TABLE IF NOT EXISTS people_mapping (
 
 
 # ── CorpusManager ──────────────────────────────────────────────────────────────
+def corpus_file_revision(db_path):
+    """Capture changes to either the main database or its WAL across processes."""
+    revision = []
+    for filename, is_wal in ((db_path, False), (f"{db_path}-wal", True)):
+        try:
+            state = os.stat(filename)
+        except FileNotFoundError:
+            revision.append(None)
+            continue
+        # Reader connections may create or remove a WAL without any committed frames.
+        if is_wal and state.st_size <= 32:
+            revision.append(None)
+        else:
+            revision.append((state.st_ino, state.st_size, state.st_mtime_ns))
+    return tuple(revision)
+
+
 def _canonical_bill_ids(values):
     """Convert only exact representations of SQLite integer bill IDs."""
     for value in values:
@@ -324,6 +343,8 @@ class CorpusManager:
         self.rate_limit_s     = rate_limit_s
         self.download_timeout = download_timeout
         self._thread = local()
+        self._literal_counts = OrderedDict()
+        self._literal_counts_lock = Lock()
         self._init_db()
 
     # ── Connection ────────────────────────────────────────────────────────────
@@ -1209,6 +1230,30 @@ class CorpusManager:
 
     # ── Search interface (returns DataFrame matching legacy CSV schema) ────────
 
+    def _count_bills(self, connection, where, params, *, cache):
+        sql = f"SELECT COUNT(*) FROM bills b {where}"
+        if not cache or connection.in_transaction:
+            return connection.execute(sql, params).fetchone()[0]
+
+        # Keep only a digest and an aggregate, never stored search text or bill IDs.
+        query_key = sha256(repr((where, params)).encode("utf-8")).digest()
+        revision = corpus_file_revision(self.db_path)
+        now = time.monotonic()
+        with self._literal_counts_lock:
+            entry = self._literal_counts.get(query_key)
+            if entry and entry[0] == revision and entry[1] > now:
+                self._literal_counts.move_to_end(query_key)
+                return entry[2]
+
+        total = connection.execute(sql, params).fetchone()[0]
+        if corpus_file_revision(self.db_path) == revision:
+            with self._literal_counts_lock:
+                self._literal_counts[query_key] = (revision, now + 60, total)
+                self._literal_counts.move_to_end(query_key)
+                if len(self._literal_counts) > 128:
+                    self._literal_counts.popitem(last=False)
+        return total
+
     @_corpus_operation
     def search_bills(
         self,
@@ -1320,7 +1365,8 @@ class CorpusManager:
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         if count_only:
-            return conn.execute(f"SELECT COUNT(*) FROM bills b {where}", params).fetchone()[0]
+            cache = bool(query) and bill_ids is None and not excluded_bill_ids
+            return self._count_bills(conn, where, params, cache=cache)
 
         order_by = {
             "Most Recent Action": "b.last_action_date DESC",

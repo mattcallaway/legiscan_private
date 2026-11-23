@@ -1325,3 +1325,44 @@ class AnnotationSearchTests(TestCase):
             self.assertEqual(corpus.search_bills(bill_ids=selected, excluded_bill_ids=excluded, count_only=True), 3)
             self.assertTrue(corpus.search_bills(bill_ids=[]).empty)
             self.assertEqual(corpus.search_bills(excluded_bill_ids=["012", 2 ** 63], count_only=True), 5)
+
+
+class LiteralSearchCountCacheTests(TestCase):
+    def test_repeated_count_hits_cache_and_committed_external_write_refreshes_it(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "bills.db"
+            corpus = CorpusManager(str(path), "")
+            with closing(sqlite3.connect(path)) as writer, writer:
+                writer.execute("INSERT INTO bills (bill_id, title) VALUES (1, 'River water policy')")
+            with corpus.connection() as reader:
+                trace = []
+                reader.set_trace_callback(trace.append)
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 1)
+                self.assertEqual(corpus.search_bills(query="WATER", count_only=True), 1)
+                self.assertEqual(sum(sql.startswith("SELECT COUNT(*) FROM bills b") for sql in trace), 1)
+                with closing(sqlite3.connect(path)) as writer, writer:
+                    writer.execute("INSERT INTO bills (bill_id, title) VALUES (2, 'Water supplies')")
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 2)
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 2)
+                self.assertEqual(sum(sql.startswith("SELECT COUNT(*) FROM bills b") for sql in trace), 2)
+
+    def test_private_filters_transactions_and_expired_entries_read_fresh_counts(self):
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory) / "bills.db"), "")
+            with corpus.connection() as reader, patch("corpus_manager.time.monotonic", return_value=100) as clock:
+                trace = []
+                reader.set_trace_callback(trace.append)
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 0)
+                self.assertEqual(corpus.search_bills(query="water", bill_ids=["9"], count_only=True), 0)
+                self.assertEqual(corpus.search_bills(query="water", bill_ids=["9"], count_only=True), 0)
+                self.assertEqual(corpus.search_bills(query="water", excluded_bill_ids=["9"], count_only=True), 0)
+                self.assertEqual(corpus.search_bills(query="water", excluded_bill_ids=["9"], count_only=True), 0)
+                self.assertEqual(len(corpus._literal_counts), 1)
+                reader.execute("BEGIN")
+                reader.execute("INSERT INTO bills (bill_id, title) VALUES (9, 'Water')")
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 1)
+                reader.rollback()
+                clock.return_value = 161
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 0)
+                self.assertEqual(corpus.search_bills(query="water", count_only=True), 0)
+                self.assertEqual(sum(sql.startswith("SELECT COUNT(*) FROM bills b") for sql in trace), 7)

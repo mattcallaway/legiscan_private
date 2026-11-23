@@ -68,12 +68,20 @@ def run(count, repetitions):
             def annotation_page():
                 return corpus.search_bills(bill_ids=selected_ids, limit=50)
 
+            def literal_page_and_count(query, *, reset_count=False):
+                if reset_count:
+                    corpus._literal_counts.clear()
+                return (
+                    corpus.search_bills(query=query, session_id=1, limit=50),
+                    corpus.search_bills(query=query, session_id=1, count_only=True),
+                )
+
             operations = {
                 "session_page": lambda: corpus.search_bills(session_id=1, limit=50),
-                "literal_page_and_count": lambda: (
-                    corpus.search_bills(query="Water supply", session_id=1, limit=50),
-                    corpus.search_bills(query="Water supply", session_id=1, count_only=True),
-                ),
+                "literal_page_and_count_cold": lambda: literal_page_and_count("Water supply", reset_count=True),
+                "literal_page_and_count_repeated": lambda: literal_page_and_count("Water supply"),
+                "common_literal_page_and_count_cold": lambda: literal_page_and_count("policy", reset_count=True),
+                "common_literal_page_and_count_repeated": lambda: literal_page_and_count("policy"),
                 "annotation_page_and_count": lambda: (
                     annotation_page(),
                     corpus.search_bills(bill_ids=selected_ids, count_only=True),
@@ -88,13 +96,17 @@ def run(count, repetitions):
                 with corpus.connection() as connection:
                     plans[name] = [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}")]
             with corpus.connection() as connection:
-                statements = []
-                connection.set_trace_callback(statements.append)
-                annotation_page()
-                connection.set_trace_callback(None)
-                plans["annotation_page"] = [
-                    row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + statements[-1])
-                ]
+                for name, query in (
+                    ("annotation_page", annotation_page),
+                    ("literal_page", lambda: corpus.search_bills(query="Water supply", session_id=1, limit=50)),
+                    ("literal_count", lambda: corpus.search_bills(query="Water supply", session_id=1, count_only=True)),
+                ):
+                    statements = []
+                    connection.set_trace_callback(statements.append)
+                    query()
+                    connection.set_trace_callback(None)
+                    sql = next(statement for statement in statements if statement.lstrip().startswith("SELECT"))
+                    plans[name] = [row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + sql)]
             return {
                 "platform": platform.platform(),
                 "python": platform.python_version(),

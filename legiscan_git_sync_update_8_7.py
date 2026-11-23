@@ -50,6 +50,7 @@ from legiscanner          import run_scan, CSV_FILE, KEYWORDS_FILE, load_keyword
 # Guarded import: if corpus_manager.py is absent the app falls back gracefully.
 try:
     from corpus_manager import CorpusManager as _CorpusManager
+    from corpus_manager import corpus_file_revision
     _CORPUS_AVAILABLE = True
 except ImportError:
     _CORPUS_AVAILABLE = False
@@ -356,18 +357,6 @@ def load_corpus_filter_options(db_path, revision, include_facets, _corpus):
     statuses = get_corpus_status_options(_corpus)
     sponsors, committees = _corpus.get_filter_options() if include_facets else ([], [])
     return statuses, sponsors, committees
-
-
-def corpus_revision(db_path):
-    revision = []
-    for filename in (db_path, f"{db_path}-wal"):
-        try:
-            state = Path(filename).stat()
-            revision.append((state.st_mtime_ns, state.st_size))
-        except FileNotFoundError:
-            revision.append(None)
-    return revision
-
 
 
 def get_corpus_status_options(corpus) -> list:
@@ -1116,7 +1105,7 @@ _all_committees = []
 if corpus:
     corpus_path = os.path.join(DATA_DIR, "bills.db")
     _all_status_opts, _all_sponsors, _all_committees = load_corpus_filter_options(
-        corpus_path, corpus_revision(corpus_path), "All Bills" in app_mode, corpus,
+        corpus_path, corpus_file_revision(corpus_path), "All Bills" in app_mode, corpus,
     )
 if not df.empty:
     _csv_stats = df["status_stage"].dropna().astype(str).unique().tolist() if "status_stage" in df.columns else []
