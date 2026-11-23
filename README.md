@@ -19,6 +19,13 @@ Find California and federal bills, organize a private watchlist, follow legislat
 
 Open the tracker URL and **Register** or **Sign In**. A registered account keeps a private workspace with watchlists, reviews, notes, topics and saved views. Guest mode uses temporary storage. The first registered account in a fresh installation becomes administrator. In the sidebar, use **Account Settings** to change your password or enter a personal LegiScan key for interactive lookups. Only enter a personal key on a server you trust. Scheduled jobs and the worker use the operator's server key. Select a workflow under **View Mode**. Open **Saved Views** to load a preset or save your filters with a name you will recognize.
 
+### Start from the dashboard
+
+- **Find bills** starts a fresh search across California and Congress, or within the jurisdiction you choose. Leave the search box blank to browse. In **All Bills**, narrow results by legislative session and filters.
+- **At a glance** shows the size of your watchlist and saved topics, the indexed bill totals by jurisdiction, and when each current session last synced. **Happening soon** shows published events from your tracked bills over the next two weeks, plus your overdue and upcoming follow-ups. Dates use Pacific time. Select an event or follow-up to open its bill.
+- Use the top shortcuts to open **Tracked Bills**, **Hearing Calendar**, and **Topic Inbox**. **Explore the workspace** links to historical coverage, people, votes, and other research tools. The **Dashboard** breadcrumb brings you back from any workspace view.
+- Administrators can open **Refresh bills** and choose California, Congress, or both. It imports the current session the first time and checks for changes on later runs. If a worker is configured, use **Check refresh status** for the queued jobs. Older sessions are imported manually in **Admin & Database Tools**.
+
 ### Find and classify legislation
 
 1. Select **All Bills** and choose a jurisdiction and session. Use **Global Search** for a bill number, title words or sponsor, then refine the available filters. A bill number can recur across sessions. Clear prior filters when results appear incomplete.
@@ -225,6 +232,8 @@ WantedBy=multi-user.target
 ```
 
 Run `sudo systemctl daemon-reload`, `sudo systemctl enable --now uftw-tracker.service`, and inspect `sudo systemctl status uftw-tracker.service` and `sudo journalctl -u uftw-tracker.service -n 100`. Route HTTPS from your reverse proxy to loopback port 8501 and forward WebSocket upgrades. For a continuous worker use a second unit with `ExecStart=/opt/uftw-tracker/.venv/bin/python cli.py --task worker`. For scheduled CLI commands use one-shot units and timers with the same working directory and protected environment. [Streamlit reverse proxy guidance](https://docs.streamlit.io/knowledge-base/deploy/deploy-streamlit-domain-port-80)
+
+The existing Policy Trackr VPS uses `/srv/policy-trackr`, `/srv/policy-trackr/data`, and `streamlit.service`. Use [the VPS release installer](tools/deploy_tracker_vps.sh) as root with a tested `improved-exp` commit. It installs the locked dependencies into a separate checkout, checks a loopback instance with temporary data, and restarts the live service using its existing environment. Keep the printed rollback directory. Running the same installer with `--rollback` and that directory restores the prior release configuration.
 
 ### Self-managed Windows or macOS
 

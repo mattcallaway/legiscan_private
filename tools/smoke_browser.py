@@ -77,10 +77,16 @@ def main():
                     page.goto(url)
                     page.get_by_role("button", name="Browse as Guest", exact=False).click(timeout=20_000)
                     expect(page.get_by_role("heading", name="Your legislative workspace")).to_be_visible()
+                    expect(page.get_by_role("heading", name="At a glance")).to_be_visible()
+                    expect(page.get_by_role("heading", name="Happening soon")).to_be_visible()
+                    expect(page.get_by_role("button", name="Refresh bills", exact=True)).to_have_count(0)
+                    page.get_by_text("New here? Start with these three steps", exact=True).click()
+                    expect(page.get_by_text("Track what matters.", exact=True)).to_be_visible()
                     page.get_by_role("button", name="Historical Coverage").click()
                     expect(page.get_by_role("heading", name="Historical Coverage")).to_be_visible()
                     expect(page.get_by_text("No California or congressional sessions have been discovered yet.")).to_be_visible()
-                    page.get_by_text("Dashboard", exact=True).click()
+                    expect(page.get_by_text("› Research people and sessions › Historical Coverage", exact=True)).to_be_visible()
+                    page.get_by_role("button", name="Dashboard", exact=True).click()
                     page.get_by_role("button", name="Hearing Calendar", exact=True).click()
                     expect(page.get_by_role("heading", name="Hearing Calendar")).to_be_visible()
                     expect(page.get_by_text("Track a bill to see its published hearings and scheduled events here.")).to_be_visible()
@@ -105,6 +111,11 @@ def main():
                     admin_page.get_by_label("Password", exact=True).fill("fixture-smoke-password")
                     sign_in.click()
                     expect(admin_page.get_by_role("heading", name="Your legislative workspace")).to_be_visible()
+                    refresh = admin_page.get_by_role("button", name="Refresh bills", exact=True)
+                    refresh.click()
+                    expect(admin_page.get_by_text("Jurisdictions to refresh", exact=True)).to_be_visible()
+                    expect(admin_page.get_by_role("button", name="Refresh selected bills", exact=True)).to_be_disabled()
+                    refresh.click()
                     admin_page.get_by_text("Admin & Database Tools", exact=False).first.click()
                     expect(admin_page.get_by_role("button", name="Create user account", exact=True)).to_be_visible()
                     print("Browser smoke passed: public signup hidden and administrator enrollment available.")
@@ -117,11 +128,19 @@ def main():
                             ((i, f"AB {i}", "Water policy unique hearing" if i == 1 else "Water policy")
                              for i in range(1, 52)),
                         )
-                    admin_page.get_by_role("button", name="All Bills", exact=False).click()
+                        fixture.execute("INSERT INTO sessions (session_id,jurisdiction,session_name) VALUES (89,'US','Federal fixture')")
+                        fixture.execute(
+                            """INSERT INTO bills (bill_id,session_id,jurisdiction,bill_number,title,status_date)
+                               VALUES (52,89,'US','HB52','Water policy','2025-01-02')""",
+                        )
+                    admin_page.get_by_role("textbox", name="Bill number, issue, or sponsor").fill("Water policy")
+                    scope = admin_page.get_by_test_id("stSelectbox").filter(has_text="Search jurisdiction")
+                    scope.get_by_role("combobox").click()
+                    admin_page.get_by_role("option", name="California", exact=True).click()
+                    admin_page.get_by_role("button", name="Search bills", exact=True).click()
                     expect(admin_page.get_by_role("heading", name="All Bills", exact=True)).to_be_visible(timeout=15_000)
                     search = admin_page.get_by_role("textbox", name="Global Search", exact=False)
-                    search.fill("Water policy")
-                    search.press("Enter")
+                    expect(search).to_have_value("Water policy")
                     expect(admin_page.get_by_text("Bills 1–50 of 51", exact=True)).to_be_visible(timeout=15_000)
                     expect(admin_page.get_by_text("Suggested civic topics: Water", exact=True)).to_be_visible()
 
@@ -136,7 +155,7 @@ def main():
                     search.press("Enter")
                     expect(admin_page.get_by_text("0 matching bills", exact=False)).to_be_visible(timeout=15_000)
                     expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
-                    print("Browser smoke passed: search results, pagination, page clamping and empty results.")
+                    print("Browser smoke passed: dashboard jurisdiction search, pagination, page clamping and empty results.")
                     admin_page.get_by_text("Topic Inbox", exact=True).click()
                     expect(admin_page.get_by_role("heading", name="Topic Inbox")).to_be_visible()
                     admin_page.get_by_role("textbox", name="Topic name", exact=True).fill("My hearing portfolio")
@@ -156,7 +175,7 @@ def main():
                     expect(admin_page.get_by_text("Last indexed", exact=False)).to_be_visible()
                     expect(admin_page.get_by_text("Tag results page", exact=True)).to_be_visible()
                     expect(admin_page.get_by_text("Suggested civic topics: Water", exact=True).first).to_be_visible()
-                    expect(admin_page.get_by_text("Water · Bills 1–50 of 51", exact=True)).to_be_visible()
+                    expect(admin_page.get_by_text("Water · Bills 1–50 of 52", exact=True)).to_be_visible()
                     print("Browser smoke passed: a bill tag opens the corresponding shared results.")
                     admin_page.get_by_text("View Details & Edit Notes", exact=False).click()
                     admin_page.get_by_role("button", name="Draft a private rule", exact=True).click()
@@ -178,6 +197,40 @@ def main():
                     expect(admin_page.get_by_text("Calendar snapshots saved", exact=False)).to_have_count(0)
                     expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
                     print("Browser smoke passed: the calendar explains a missing key without showing a success message.")
+
+                    seed_agenda = (
+                        "from pathlib import Path\n"
+                        "from datetime import timedelta\n"
+                        "from auth import get_user_data_dir\n"
+                        "from bill_workspace import update_bill_note\n"
+                        "from config import DATA_DIR\n"
+                        "from corpus_manager import CorpusManager\n"
+                        "from hearing_calendar import legislative_today\n"
+                        "today = legislative_today()\n"
+                        "agenda = CorpusManager(str(Path(DATA_DIR, 'bills.db')), '')\n"
+                        "notes = Path(get_user_data_dir('fixture-admin'), 'bill_notes.json')\n"
+                        "update_bill_note(notes, '1', {}, {'follow_up': today.isoformat()})\n"
+                        "with agenda.connection() as conn, conn:\n"
+                        "    agenda._save_bill_calendar(conn, {'bill_id': 1, 'bill_number': 'AB 1', 'jurisdiction': 'CA'}, "
+                        "[{'date': (today + timedelta(days=2)).isoformat(), 'type': 'Committee hearing'}], '')\n"
+                    )
+                    subprocess.run([executable, "-B", "-c", seed_agenda], cwd=ROOT, env=env, check=True)
+                    admin_page.get_by_role("button", name="Dashboard", exact=True).click()
+                    hearing = admin_page.get_by_role("button", name="AB 1 · Committee hearing", exact=True)
+                    expect(hearing).to_be_visible()
+                    expect(admin_page.get_by_role("button", name="AB 1 · Due today", exact=False)).to_be_visible()
+                    expect(admin_page.get_by_text("Source calendars available for 1 of 1 tracked bills.")).to_be_visible()
+                    hearing.click()
+                    expect(admin_page.get_by_role("button", name="Back to session search")).to_be_visible()
+                    phone = browser.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
+                    phone.goto(url)
+                    phone.get_by_role("button", name="Browse as Guest", exact=False).click(timeout=20_000)
+                    expect(phone.get_by_role("heading", name="Happening soon")).to_be_visible()
+                    expect(phone.get_by_role("button", name="Search bills", exact=True)).to_be_in_viewport()
+                    expect(phone.get_by_role("button", name="AB 1 · Due today", exact=False)).to_have_count(0)
+                    expect(phone.get_by_role("button", name="AB 1 · Committee hearing", exact=True)).to_have_count(0)
+                    expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
+                    print("Browser smoke passed: dashboard events and follow-ups open the tracked bill and stay private.")
                     browser.close()
             except Exception:
                 log.seek(0)

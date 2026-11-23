@@ -1,9 +1,26 @@
 """Normalize source calendar events and export date-only iCalendar entries."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import re
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
+
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def legislative_today():
+    return datetime.now(PACIFIC).date()
+
+
+def upcoming_calendar_events(calendars, today, days, *, include_cancelled=False):
+    first = today.isoformat()
+    last = (today + timedelta(days=days - 1)).isoformat()
+    return sorted((
+        event for snapshot in calendars.values() for event in snapshot["events"]
+        if first <= event["date"] <= last and (include_cancelled or not event["cancelled"])
+    ), key=lambda event: (event["date"], event["time"], event["bill_number"]))
 
 
 def _text(value):

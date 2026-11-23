@@ -1,6 +1,5 @@
 """Independent views rendered by the tracker entry point."""
 
-from datetime import date, timedelta
 import logging
 import os
 
@@ -8,7 +7,7 @@ import pandas as pd
 
 import streamlit as st
 
-from hearing_calendar import calendar_refresh_failure_summary, export_calendar
+from hearing_calendar import calendar_refresh_failure_summary, export_calendar, legislative_today, upcoming_calendar_events
 from job_runner import run_calendar_refresh
 from legiscanner import US_STATES
 from notifications import ACTIVITY_LABELS, Notifications, account_owner, enabled_config
@@ -122,22 +121,6 @@ def render_historical_coverage(corpus):
         st.caption("Admins can add older sessions under Manual session import and refresh.")
 
 
-def render_dashboard(tracked_count, topic_count, destinations, navigate):
-    st.subheader("Your legislative workspace")
-    left, right = st.columns(2)
-    left.metric("Tracked bills", tracked_count)
-    right.metric("Saved topics", topic_count)
-    for heading, choices in (
-        ("Discover", ("🔍 All Bills", "Civic Tags", "Topic Inbox", "Historical Coverage")),
-        ("Monitor", ("⭐ Tracked Bills", "Daily Review", "Hearing Calendar", "Email Notifications")),
-        ("Research people", ("👔 Legislator Directory", "Federal Voting Profiles", "🛠️ Staff Analytics")),
-    ):
-        st.markdown(f"**{heading}**")
-        available = [choice for choice in choices if choice in destinations]
-        for column, choice in zip(st.columns(len(available)), available):
-            column.button(choice, key=f"dashboard:{choice}", on_click=navigate, args=(choice,))
-
-
 def render_hearing_calendar(corpus, tracked_bills, job_manager, username, *,
                             is_admin, has_personal_key, load_tracked_rows, open_bill):
     st.subheader("Hearing Calendar")
@@ -160,15 +143,11 @@ def render_hearing_calendar(corpus, tracked_bills, job_manager, username, *,
         ids = [bill for bill in tracked_bills if bill.isascii() and bill.isdecimal()]
         calendars = corpus.get_bill_calendars(ids)
         st.caption(f"Source calendar snapshots available for {len(calendars):,} of {len(ids):,} tracked bills.")
-        current = date.today()
+        current = legislative_today()
         horizon = st.selectbox("Show events in the next", [7, 30, 60, 90], index=1,
                                format_func=lambda days: f"{days} days", key="hearing_window")
         include_cancelled = st.checkbox("Show explicitly canceled events", key="show_canceled_hearings")
-        events = sorted((
-            event for calendar in calendars.values() for event in calendar["events"]
-            if current.isoformat() <= event["date"] <= (current + timedelta(days=horizon - 1)).isoformat()
-            and (include_cancelled or not event["cancelled"])
-        ), key=lambda event: (event["date"], event["time"], event["bill_number"]))
+        events = upcoming_calendar_events(calendars, current, horizon, include_cancelled=include_cancelled)
         if events:
             jurisdictions = sorted({event["jurisdiction"] or "Unknown" for event in events})
             scope = st.multiselect("Jurisdictions", jurisdictions, key="hearing_jurisdiction")

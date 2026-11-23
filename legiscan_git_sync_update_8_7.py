@@ -1,6 +1,7 @@
 from notifications import STATUS_LABELS
+from tracker_dashboard import render_current_bill_sync, render_dashboard, render_workspace_breadcrumb
 from tracker_pages import (
-    render_dashboard, render_email_notifications, render_hearing_calendar, render_historical_coverage,
+    render_email_notifications, render_hearing_calendar, render_historical_coverage,
 )
 from service_terms import CALIFORNIA_SOURCE, fetch_congress_member_terms, vote_service_status
 import requests
@@ -28,10 +29,10 @@ from bill_research import (
 )
 from civic_tags import suggest_civic_topics
 from civic_index import civic_index_summary, indexed_civic_bills, learned_civic_phrases
-from hearing_calendar import source_link
+from hearing_calendar import legislative_today, source_link, upcoming_calendar_events
 
 from job_manager import JobManager
-from job_runner import current_session, run_bootstrap_job, run_refresh_job, run_rescan_job, sync_selected_sessions
+from job_runner import run_bootstrap_job, run_refresh_job, run_rescan_job
 from staff_manager import StaffManager, resolve_legislator, normalize_name_components
 
 # Configure logging
@@ -1276,6 +1277,7 @@ if "⭐ Tracked Bills" in app_mode:
 
 # ── F. ADMIN / DATA TOOLS (Expander) ──────────────────────────────────────────
 st.sidebar.divider()
+current_sync_options = None
 with st.sidebar.expander("⚙️ Admin & Database Tools"):
     if not _auth.is_admin():
         st.warning("🔒 Admin access required.")
@@ -1501,6 +1503,10 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
         st.divider()
 
         background_sync = os.environ.get("LEGISCAN_BACKGROUND_JOBS", "").strip().lower() in {"1", "true", "yes"}
+        current_sync_options = dict(
+            corpus=corpus, job_manager=job_manager, username=_username, background=background_sync,
+            has_key=bool((API_KEY if background_sync else _effective_api_key).strip()),
+        )
 
         def enqueue_sync(job_type, jurisdiction, scope, payload):
             try:
@@ -1569,45 +1575,8 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
             ca_selected = st.checkbox("California Legislature", value=True, key="corpus_scope_ca")
             us_selected = st.checkbox("U.S. Congress", value=False, key="corpus_scope_us")
             jurisdictions = [code for code, selected in (("CA", ca_selected), ("US", us_selected)) if selected]
-            jurisdiction_names = {"CA": "California", "US": "U.S. Congress"}
-            year = datetime.now().year
-            corpus_busy = any(job["job_type"] in {"bootstrap_corpus", "incremental_refresh"}
-                              for job in _running_jobs_for_lock)
-            for code in jurisdictions:
-                session = current_session(corpus.get_cached_sessions(code), year)
-                label = jurisdiction_names[code]
-                if session is None:
-                    st.caption(f"{label}: current session will be discovered at sync.")
-                else:
-                    action = "Refresh updates" if session.get("last_bootstrap") else "First-time bulk import"
-                    st.caption(f'{label}: {session["session_name"]} · {action}')
-            if st.button("Sync selected jurisdictions", key="sync_corpus_jurisdictions",
-                         disabled=not jurisdictions or not job_manager or (corpus_busy and not background_sync)):
-                if background_sync:
-                    for code in jurisdictions:
-                        enqueue_sync("current_session_sync", code, "CURRENT", {"year": year})
-                else:
-                    progress = st.progress(0, text="Preparing session sync...")
-                    outcomes = sync_selected_sessions(
-                        corpus, jurisdictions, year, job_manager,
-                        lambda fraction, message: progress.progress(min(fraction, 1.0), text=message),
-                    )
-                    progress.empty()
-                    for code, outcome in outcomes.items():
-                        label = jurisdiction_names[code]
-                        if "error" in outcome:
-                            st.error(f'{label}: {outcome["error"]}')
-                        else:
-                            stats = outcome["stats"]
-                            action = "Bulk import" if outcome["importing"] else "Refresh"
-                            message = (
-                                f'{label} · {outcome["session"]}: {action} '
-                                f'({stats["new"]:,} new, {stats["updated"]:,} updated)'
-                            )
-                            if stats["errors"]:
-                                st.warning(f'{message}. Incomplete: {stats["errors"]} errors.')
-                            else:
-                                st.success(f"{message} completed.")
+            render_current_bill_sync(jurisdictions, **current_sync_options, key="admin_corpus_sync",
+                                     label="Sync selected jurisdictions")
 
             with st.expander("Manual session import and refresh"):
                 _cached_sessions = corpus.get_cached_sessions()
@@ -1699,10 +1668,12 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN CONTENT / WORKSPACE
 # ═══════════════════════════════════════════════════════════════════════════════
-st.title("🏛️ Unfuck The World Bill Tracker")
-# We will invoke run_smart_header later dynamically inside each mode (All Bills, Keyword Matches, Tracked Bills) because we need the final df_count AFTER filters!
+def open_view(choice):
+    st.session_state.app_mode = choice
 
-st.divider()
+
+if app_mode != "Dashboard":
+    render_workspace_breadcrumb(app_mode, open_view)
 
 def clear_bill_filters():
     for field in (
@@ -1718,6 +1689,15 @@ def clear_bill_filters():
     st.session_state.pop("tracked_topic_filter", None)
     for prefix in ("ab", "kw", "tr"):
         st.session_state.pop(f"{prefix}_page", None)
+
+
+def search_from_dashboard(query, jurisdictions):
+    clear_bill_filters()
+    st.session_state.active_view_name = None
+    st.session_state["global_sort_input"] = "Most Recent Action"
+    st.session_state["global_search_input"] = query
+    st.session_state["global_jur_input"] = list(jurisdictions)
+    open_view("🔍 All Bills")
 
 
 if any(view in app_mode for view in ("All Bills", "Keyword Matches", "Tracked Bills")):
@@ -1992,10 +1972,12 @@ def run_unified_filters(work_df):
 
 # ────────── ALL BILLS ─────────────────────────────────────────────────────────
 if app_mode == "Dashboard":
-    def open_view(choice):
-        st.session_state.app_mode = choice
-
-    render_dashboard(len(tracked_bills), len(private_topic_rules), view_modes, open_view)
+    render_dashboard(
+        corpus=corpus, tracked_bills=tracked_bills, notes=bill_notes, topic_count=len(private_topic_rules),
+        destinations=view_modes, navigate=open_view, find_bills=search_from_dashboard,
+        load_tracked_rows=lambda ids: get_tracked_bills_df(ids, corpus, df), open_bill=open_profile_bill,
+        is_guest=_auth.is_guest(), refresh_options=current_sync_options,
+    )
 elif "All Bills" in app_mode:
     if not _CORPUS_AVAILABLE or not corpus:
         st.warning("Master Corpus SQLite not responding.")
@@ -2118,12 +2100,9 @@ elif app_mode == "Daily Review":
         (key, topic, find_topic_matches(topic, corpus, df, topic["seen"]).to_dict("records"))
         for key, topic in topics.items() if topic.get("track_matches", True)
     ]
-    today = date.today()
+    today = legislative_today()
     schedules = corpus.get_bill_calendars(tracked_bills) if corpus else {}
-    upcoming = [
-        event for calendar in schedules.values() for event in calendar["events"]
-        if today.isoformat() <= event["date"] <= (today + timedelta(days=6)).isoformat()
-    ]
+    upcoming = upcoming_calendar_events(schedules, today, 7)
     queue = build_review_queue(tracked.to_dict("records"), bill_notes, by_topic, queue_preferences, today, upcoming)
     if not queue:
         st.info("You're caught up. Save topics in Topic Inbox or set follow-ups on tracked bills to see them here.")

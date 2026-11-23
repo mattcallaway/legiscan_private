@@ -789,6 +789,52 @@ class AdvancedTopicTests(TestCase):
             parse_topic_rules("", "water", "water")
 
 
+class DashboardTests(TestCase):
+    def test_current_session_refresh_queues_only_selected_jurisdictions(self):
+        from datetime import date
+        from job_manager import JobManager
+        from tracker_dashboard import render_current_bill_sync
+
+        with TemporaryDirectory() as directory:
+            jobs = JobManager(str(Path(directory, "jobs.db")))
+            corpus = Mock()
+            corpus.get_cached_sessions.return_value = [{
+                "jurisdiction": "US", "session_id": 119, "session_name": "119th Congress",
+                "year_start": 2025, "year_end": 2026, "last_bootstrap": "2025-03-01T17:00:00+00:00",
+            }]
+            with (patch("tracker_dashboard.st") as ui,
+                  patch("tracker_dashboard.legislative_today", return_value=date(2026, 11, 23))):
+                ui.session_state = {}
+                ui.button.return_value = True
+                options = dict(corpus=corpus, job_manager=jobs, username="fixture-admin", background=True,
+                               has_key=True, key="dashboard_refresh", label="Refresh selected bills")
+                render_current_bill_sync(["US"], **options)
+                render_current_bill_sync(["US"], **options)
+
+            job, = jobs.get_recent_jobs()
+            self.assertEqual((job["job_type"], job["jurisdiction"], job["session_scope"]),
+                             ("current_session_sync", "US", "CURRENT"))
+            self.assertEqual(json.loads(job["queue_payload"]), {"year": 2026})
+            self.assertEqual(job["initiated_by"], "fixture-admin")
+
+    def test_dashboard_window_includes_overdue_follow_ups_and_omits_past_or_canceled_events(self):
+        from datetime import date
+        from hearing_calendar import upcoming_calendar_events
+        from tracker_dashboard import _due_follow_ups
+
+        today = date(2026, 11, 23)
+        notes = {str(i): {"follow_up": day} for i, day in enumerate((
+            "2026-11-22", "2026-11-23", "2026-12-06", "2026-12-07", "unknown",
+        ))}
+        due = _due_follow_ups(list(notes), notes, today, 14)
+        self.assertEqual([bill_id for _, bill_id in due], ["0", "1", "2"])
+
+        events = [dict(date=day, cancelled=canceled, time="", bill_number="AB 1") for day, canceled in (
+            ("2026-11-22", False), ("2026-11-23", True), ("2026-12-06", False), ("2026-12-07", False),
+        )]
+        self.assertEqual(upcoming_calendar_events({"1": {"events": events}}, today, 14), [events[2]])
+
+
 class HearingCalendarTests(TestCase):
     def test_calendar_export_uses_date_markers_and_excludes_explicit_cancellations(self):
         from hearing_calendar import export_calendar, normalize_calendar
