@@ -28,3 +28,13 @@ The first app or worker start with this release upgrades a fresh or legacy unver
 ## Staff and job schema versions
 
 The staff and job databases now adopt an unversioned file as SQLite user_version 1 on first use. The application and worker use the same version check and serialized migration routine as the corpus. Stop the app, worker and cron writers before a cold backup and release switch. Preserve staff.db and jobs.db in that backup, then check a known staff profile and roster snapshot, and inspect queued jobs before starting a worker. The upgrade preserves existing positions, notes stored outside the roster, snapshots, job payloads and status. Existing retry rules still apply when the worker starts. The previously paused legacy staff cron is a separate operational decision.
+
+## Automated cold-backup rehearsal
+
+Run from the experimental release checkout using its installed Python. Point the command at the existing private cutover backup.
+
+    .venv/bin/python tools/rehearse_restore.py /path/to/private-backup/data.tar.gz
+
+The tool expects an existing cold tar archive rooted at data/, containing bills.db, staff.db, jobs.db, and users.json. Use a protected, authorized archive and ensure the temporary directory is on a private filesystem with room for a full extraction. The program expands into a disposable directory, upgrades only the restored copies, checks SQLite integrity and preserved row content, verifies private file hashes, and reports account, watchlist, bill note, attachment and queued-job counts. Use the exit status to distinguish a passed rehearsal from failure or missing attachments. It does not print names, notes, hashes, credentials, or job payloads.
+
+This covers filesystem data. PostgreSQL dumps and provider delivery are a separate rehearsal. Review old scheduled staff work and any pending jobs before starting writers on a restored production instance. The rehearsal does not start Streamlit or the worker.

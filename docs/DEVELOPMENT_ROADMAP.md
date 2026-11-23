@@ -19,3 +19,5 @@ See [audit findings](AUDIT_FINDINGS.md), [test matrix](TEST_MATRIX.md), [baselin
 ## Experimental branch
 
 Development and subsequent follow-up commits from the master brief are now staged on improved-exp. The improved branch remains the pre-experiment release line. The first persistence change isolates CorpusManager connections and API accounting across concurrent threads. Production cutover, a coordinated restore rehearsal, account/workspace migration review, and measured concurrent throughput remain open. Corpus, staff, and job stores now have transactional adoption migrations and reject unsupported newer schemas.
+
+The filesystem cold-backup rehearsal is automated and tested with a synthetic legacy archive. A run against the private VPS backup and a separate PostgreSQL restore when configured remain release gates.

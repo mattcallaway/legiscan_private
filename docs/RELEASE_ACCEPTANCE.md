@@ -33,3 +33,7 @@ Tests cover a pre-document-column fixture with historical session timestamps and
 ## Staff and job migration checkpoint
 
 All 54 local regressions passed with isolated PostgreSQL, and the browser smoke test passed. The upgrade fixtures preserve staff and identity IDs, restore a pre-versioned roster snapshot, and keep job history and pending payloads claimable after restart. The preceding corpus migration passed both GitHub Actions jobs. Production has not been upgraded.
+
+## Cold-backup rehearsal checkpoint
+
+An automated rehearsal restored a synthetic cold archive, upgraded the three databases, and verified historical coverage, staff profiles, account and workspace data, attachments and a pending job. It rejected archive links and paths outside the data root. The regression suite passed all 55 tests with isolated PostgreSQL, and the final rehearsal-specific checks passed after adding application-level read verification. Both GitHub Actions jobs passed on the preceding staff/job migration. The actual private VPS archive and a PostgreSQL restore remain separate operator checks.

@@ -603,6 +603,28 @@ class PrivateRestoreRehearsalTests(TestCase):
             queued = jobs.enqueue_job("incremental_refresh", "CA", "10", {})
 
             backup = copytree(source, root / "backup")
+            from tarfile import open as open_tar
+            from tools.rehearse_restore import rehearse
+
+            for name in ("bills.db", "staff.db", "jobs.db"):
+                with closing(sqlite3.connect(backup / name)) as connection, connection:
+                    connection.execute("PRAGMA user_version = 0")
+            archive = root / "data.tar.gz"
+            with open_tar(archive, "w:gz") as output:
+                output.add(backup, arcname="data")
+            archive_digest = sha256(archive.read_bytes()).digest()
+            report = rehearse(archive)
+            self.assertEqual(report["schema_versions"], {
+                name: {"before": 0, "after": 1} for name in ("bills.db", "staff.db", "jobs.db")
+            })
+            self.assertEqual(
+                (report["accounts"], report["tracked_entries"], report["bill_notes"],
+                 report["missing_attachments"], report["queued_jobs"]), (1, 1, 1, 0, 1),
+            )
+            self.assertEqual((report["historical_sessions"], report["legislator_profiles"]), (1, 1))
+            self.assertEqual(sha256(archive.read_bytes()).digest(), archive_digest)
+            with closing(sqlite3.connect(backup / "bills.db")) as connection:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 0)
             restored = copytree(backup, root / "restored")
             restored_workspace = restored / "workspaces" / "fixture-account"
             self.assertEqual(read_workspace(restored_workspace / "tracked_bills.json", []), ["101"])
@@ -624,6 +646,26 @@ class PrivateRestoreRehearsalTests(TestCase):
             self.assertEqual(JobManager(str(restored / "jobs.db")).get_job(queued)["status"], "QUEUED")
             update_tracking(restored_workspace / "tracked_bills.json", add="102")
             self.assertEqual(read_workspace(workspace / "tracked_bills.json", []), ["101"])
+
+
+    def test_rehearsal_rejects_archive_links_and_paths_outside_the_backup_root(self):
+        from tarfile import TarInfo, SYMTYPE, open as open_tar
+        from tools.rehearse_restore import RehearsalError, extract_backup
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            forbidden = TarInfo("data/../outside")
+            linked = TarInfo("data/unexpected_link")
+            linked.type = SYMTYPE
+            linked.linkname = "users.json"
+            for member in (forbidden, linked):
+                with self.subTest(member=member.name):
+                    archive = root / "invalid.tar.gz"
+                    with open_tar(archive, "w:gz") as output:
+                        output.addfile(member)
+                    with self.assertRaisesRegex(RehearsalError, "regular files and directories"):
+                        extract_backup(archive, root / "extracted")
+            self.assertFalse((root / "extracted").exists())
 
 
 class OfficialServiceTermTests(TestCase):

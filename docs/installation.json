@@ -59,6 +59,11 @@
     "browser_smoke": [
       "python",
       "tools/smoke_browser.py"
+    ],
+    "restore_rehearsal": [
+      "python",
+      "tools/rehearse_restore.py",
+      "{cold_backup_archive}"
     ]
   },
   "platforms": {
