@@ -71342,6 +71342,749 @@
       ]
     },
     {
+      "path": "tools/benchmark_corpus.py",
+      "module": "tools.benchmark_corpus",
+      "source_sha256_normalized_newlines": "865cc97daf6fd5ceb39be9a40e8173ca47c1433bd38ac09be48611d3fcdfcaf9",
+      "symbols": [
+        {
+          "id": "tools.benchmark_corpus.fixture_rows",
+          "name": "fixture_rows",
+          "owner": "tools.benchmark_corpus",
+          "kind": "function",
+          "line": 18,
+          "end_line": 27,
+          "decorators": [],
+          "parameters": "count",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "tools.benchmark_corpus.measure",
+          "name": "measure",
+          "owner": "tools.benchmark_corpus",
+          "kind": "function",
+          "line": 30,
+          "end_line": 42,
+          "decorators": [],
+          "parameters": "action, repetitions",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "tools.benchmark_corpus.run",
+          "name": "run",
+          "owner": "tools.benchmark_corpus",
+          "kind": "function",
+          "line": 45,
+          "end_line": 91,
+          "decorators": [],
+          "parameters": "count, repetitions",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "tools.benchmark_corpus.run.<lambda@67:32>",
+          "name": "<lambda@67:32>",
+          "owner": "tools.benchmark_corpus.run",
+          "kind": "lambda",
+          "line": 67,
+          "end_line": 67,
+          "parameters": ""
+        },
+        {
+          "id": "tools.benchmark_corpus.run.<lambda@68:42>",
+          "name": "<lambda@68:42>",
+          "owner": "tools.benchmark_corpus.run",
+          "kind": "lambda",
+          "line": 68,
+          "end_line": 71,
+          "parameters": ""
+        },
+        {
+          "id": "tools.benchmark_corpus.main",
+          "name": "main",
+          "owner": "tools.benchmark_corpus",
+          "kind": "function",
+          "line": 94,
+          "end_line": 101,
+          "decorators": [],
+          "parameters": "",
+          "returns": null,
+          "async_function": false
+        }
+      ],
+      "imports": [
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 3,
+          "binding": "argparse",
+          "target": "argparse",
+          "imported": "argparse"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 4,
+          "binding": "json",
+          "target": "json",
+          "imported": "json"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 5,
+          "binding": "math",
+          "target": "math",
+          "imported": "math"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 6,
+          "binding": "os",
+          "target": "os",
+          "imported": "os"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 7,
+          "binding": "platform",
+          "target": "platform",
+          "imported": "platform"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 8,
+          "binding": "Path",
+          "target": "pathlib.Path",
+          "imported": "pathlib"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 9,
+          "binding": "median",
+          "target": "statistics.median",
+          "imported": "statistics"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 10,
+          "binding": "sys",
+          "target": "sys",
+          "imported": "sys"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 11,
+          "binding": "TemporaryDirectory",
+          "target": "tempfile.TemporaryDirectory",
+          "imported": "tempfile"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 12,
+          "binding": "perf_counter",
+          "target": "time.perf_counter",
+          "imported": "time"
+        },
+        {
+          "owner": "tools.benchmark_corpus",
+          "line": 13,
+          "binding": "patch",
+          "target": "unittest.mock.patch",
+          "imported": "unittest.mock"
+        },
+        {
+          "owner": "tools.benchmark_corpus.run",
+          "line": 48,
+          "binding": "CorpusManager",
+          "target": "corpus_manager.CorpusManager",
+          "imported": "corpus_manager"
+        }
+      ],
+      "calls": [
+        {
+          "caller": "tools.benchmark_corpus",
+          "line": 15,
+          "column": 7,
+          "expression": "Path(__file__).resolve",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus",
+          "line": 15,
+          "column": 7,
+          "expression": "Path",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.fixture_rows",
+          "line": 19,
+          "column": 17,
+          "expression": "range",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.fixture_rows",
+          "line": 25,
+          "column": 70,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 31,
+          "column": 4,
+          "expression": "action",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 33,
+          "column": 13,
+          "expression": "range",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 34,
+          "column": 16,
+          "expression": "perf_counter",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 35,
+          "column": 8,
+          "expression": "action",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 36,
+          "column": 8,
+          "expression": "samples.append",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 36,
+          "column": 24,
+          "expression": "perf_counter",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 37,
+          "column": 14,
+          "expression": "sorted",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 39,
+          "column": 18,
+          "expression": "round",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 39,
+          "column": 24,
+          "expression": "median",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 40,
+          "column": 18,
+          "expression": "round",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 40,
+          "column": 32,
+          "expression": "math.ceil",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 40,
+          "column": 49,
+          "expression": "len",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 41,
+          "column": 18,
+          "expression": "round",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 41,
+          "column": 32,
+          "expression": "math.ceil",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.measure",
+          "line": 41,
+          "column": 49,
+          "expression": "len",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 46,
+          "column": 4,
+          "expression": "sys.path.insert",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 46,
+          "column": 23,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 47,
+          "column": 9,
+          "expression": "patch.dict",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 50,
+          "column": 9,
+          "expression": "TemporaryDirectory",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 51,
+          "column": 19,
+          "expression": "Path",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 52,
+          "column": 17,
+          "expression": "CorpusManager",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "corpus_manager.CorpusManager"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 52,
+          "column": 31,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 54,
+          "column": 25,
+          "expression": "corpus._get_conn",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "attribute_name_only",
+          "targets": [
+            "corpus_manager.CorpusManager._get_conn",
+            "staff_manager.StaffManager._get_conn"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 56,
+          "column": 16,
+          "expression": "connection.executemany",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 58,
+          "column": 99,
+          "expression": "range",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 60,
+          "column": 16,
+          "expression": "connection.executemany",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 64,
+          "column": 20,
+          "expression": "fixture_rows",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "tools.benchmark_corpus.fixture_rows"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run.<lambda@67:32>",
+          "line": 67,
+          "column": 40,
+          "expression": "corpus.search_bills",
+          "positional_arguments": 0,
+          "keyword_arguments": [
+            "session_id",
+            "limit"
+          ],
+          "resolution": "attribute_name_only",
+          "targets": [
+            "corpus_manager.CorpusManager.search_bills"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run.<lambda@68:42>",
+          "line": 69,
+          "column": 20,
+          "expression": "corpus.search_bills",
+          "positional_arguments": 0,
+          "keyword_arguments": [
+            "query",
+            "session_id",
+            "limit"
+          ],
+          "resolution": "attribute_name_only",
+          "targets": [
+            "corpus_manager.CorpusManager.search_bills"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run.<lambda@68:42>",
+          "line": 70,
+          "column": 20,
+          "expression": "corpus.search_bills",
+          "positional_arguments": 0,
+          "keyword_arguments": [
+            "query",
+            "session_id",
+            "count_only"
+          ],
+          "resolution": "attribute_name_only",
+          "targets": [
+            "corpus_manager.CorpusManager.search_bills"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 75,
+          "column": 29,
+          "expression": "{'session_page': 'SELECT bill_id FROM bills WHERE session_id=1 ORDER BY status_date DESC,bill_id LIMIT 50', 'status_date_range': \"SELECT bill_id FROM bills WHERE substr(status_date,1,10) BETWEEN '2025-01-01' AND '2025-02-01'\"}.items",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 79,
+          "column": 49,
+          "expression": "connection.execute",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 81,
+          "column": 28,
+          "expression": "platform.platform",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 82,
+          "column": 26,
+          "expression": "platform.python_version",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 86,
+          "column": 42,
+          "expression": "sum",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 86,
+          "column": 46,
+          "expression": "path.stat",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 86,
+          "column": 78,
+          "expression": "Path(directory).iterdir",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 86,
+          "column": 78,
+          "expression": "Path",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 87,
+          "column": 39,
+          "expression": "measure",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "tools.benchmark_corpus.measure"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 87,
+          "column": 88,
+          "expression": "operations.items",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.run",
+          "line": 91,
+          "column": 12,
+          "expression": "corpus.close",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "attribute_name_only",
+          "targets": [
+            "corpus_manager.CorpusManager.close"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 95,
+          "column": 13,
+          "expression": "argparse.ArgumentParser",
+          "positional_arguments": 0,
+          "keyword_arguments": [
+            "description"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 96,
+          "column": 4,
+          "expression": "parser.add_argument",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "type",
+            "default"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 97,
+          "column": 4,
+          "expression": "parser.add_argument",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "type",
+            "default"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 98,
+          "column": 11,
+          "expression": "parser.parse_args",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 100,
+          "column": 8,
+          "expression": "parser.error",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 101,
+          "column": 4,
+          "expression": "print",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 101,
+          "column": 10,
+          "expression": "json.dumps",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "indent"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.benchmark_corpus.main",
+          "line": 101,
+          "column": 21,
+          "expression": "run",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "tools.benchmark_corpus.run"
+          ]
+        },
+        {
+          "caller": "tools.benchmark_corpus",
+          "line": 105,
+          "column": 4,
+          "expression": "main",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "tools.benchmark_corpus.main"
+          ]
+        }
+      ]
+    },
+    {
       "path": "tools/generate_techmap.py",
       "module": "tools.generate_techmap",
       "source_sha256_normalized_newlines": "5ff302dda55e2f38bc1677549b837e39db0a0562c187a091f2dbde96e1318bd9",

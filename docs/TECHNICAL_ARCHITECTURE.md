@@ -1,0 +1,15 @@
+# Technical architecture
+
+The deployed entry is [legiscan_git_sync_update_8_7.py](../legiscan_git_sync_update_8_7.py), a Streamlit process. [tracker_pages.py](../tracker_pages.py) renders the dashboard, hearing calendar, historical coverage and notifications. The main entry still owns core results, profile rendering, filtering, workspace access and admin routing. Older entry points remain source inventory and upgrade references. The [technical map](TECHMAP.md) traces calls and flows, and the [static inventory](techmap.json) preserves source locations, imports and candidate call targets.
+
+| Boundary | Responsibility | Failure behavior to preserve |
+| --- | --- | --- |
+| Streamlit and auth | Browser session, registered/guest identity, role and account views | Guest storage is temporary. A deleted account or changed credential revision invalidates the affected session. |
+| Account and workspace | JSON account store, opaque and legacy paths, SQLite workspace keys, JSON mirrors, uploads | Preserve older accounts and attachments. Isolate write conflicts and recover committed user changes from workspace state. |
+| Corpus and scanner | LegiScan dataset and incremental refresh, SQLite research corpus and separate keyword snapshot | Preserve committed partial progress and only advance complete refresh metadata after a successful run. |
+| Staff and profiles | Workbook previews, stable identifiers, observed assignment history, vote mapping and sourced service terms | Reject stale previews and keep prior roster snapshots and manual identity decisions. |
+| CLI and worker | Job submission, per-job budget, claim, status, recovery and final outcome | Keep queue and execution environment separate from browser state. Retain recoverable job payloads without credentials. |
+| Notifications | PostgreSQL preferences, observed baselines, durable outbox and Resend calls | Verification and additional alerts require opt-in. Delivery can retry with an idempotency key and rechecks eligibility. |
+| Git and official integrations | Explicit public snapshot allowlist, Congress.gov term lookups and spreadsheet export | Preserve private data boundaries and show upstream incompleteness where available. |
+
+[requirements.txt](../requirements.txt) declares dependencies and [requirements.lock](../requirements.lock) pins the Python 3.12 environment with hashes. [installation.json](installation.json) maps processes, credentials and dependencies. The baseline VPS ran a single systemd Streamlit service with a private persistent filesystem. Multiple web processes require explicit account and database coordination review. Production email was unconfigured at the observed checkpoint. CI run evidence is recorded in release acceptance.

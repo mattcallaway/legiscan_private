@@ -1,0 +1,16 @@
+# Feature capability matrix
+
+The repository columns refer to `main` at `8317430` and `improved` at `221f279`. Source-backed capability and representative fixture coverage establish that a route exists. They do not establish production completeness or comparative product performance.
+
+| Workflow | Main baseline | Improved baseline | LegiScan and California sources | Remaining opportunity |
+| --- | --- | --- | --- | --- |
+| Discover and monitor | Bill corpus, keyword scan, watchlist | Scoped historical search, literal topic rules and evidence, private inbox and review | LegiScan advertises national search, keyword alerts and monitored bill alerts. California official sources provide legislative documents and actions. | Measure relevant result precision, missing bills and time-to-discovery against an equivalent source dataset. |
+| Understand change | Bill text reader and basic history | Amendment diff, saved review baseline and decision history | LegiScan provides national bill texts and supplemental data. Official bill text is the citation source. | Represent substantive additions, deletions, changed deadlines and section-level links with signed-off fixtures. |
+| Track hearings and actions | Source bill actions | Tracked hearing snapshots, date-only exports, opt-in status and activity categories | Official California Assembly Daily File provides hearings and floor agenda. LegiScan advertises alerts and reports. | Reconcile authority, timezones, changes, stale feeds and tentative dates. |
+| Profile people and votes | Staff and corpus identity data | Stable roster IDs and previews, sourced terms, vote coverage and profile views | Official member, staff and legislative records establish identities. LegiScan indexes people and votes. | Publish evidence behind identity confidence and distinguish official memberships from recorded vote activity. |
+| Organize research | Notes, labels and saved user state | Private topics, follow-ups, decisions, comparisons, and recovery | LegiScan GAITS already offers classification, notes, stance, priority, reporting and multi-user features. | Benchmark private research continuity and source-backed decision briefs. Team collaboration requires an explicit permission model. |
+| Export and share | Existing snapshots | Scoped exports and private notes/history | LegiScan offers multiple reporting formats and shareable reports. | Compare the time and accuracy of preparing a sourced California briefing. Live sharing and team features remain proposals. |
+
+Use matched tasks and same-date source snapshots. Record product tier, task completion, time, result accuracy, source verification, missing steps, and reviewer agreement. Start with a California hearing change, one amended bill, one roll-call question and one historical search. Publish participant count and raw aggregate methodology before making a superiority claim.
+
+Sources: [LegiScan tracking and GAITS capabilities](https://legiscan.com/features), [LegiScan API and data coverage](https://legiscan.com/About), [California Legislative Information](https://leginfo.legislature.ca.gov/), and [California Assembly Daily File](https://www.assembly.ca.gov/schedules-publications/daily-file).
