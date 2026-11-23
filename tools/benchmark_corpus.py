@@ -76,7 +76,18 @@ def run(count, repetitions):
                     corpus.search_bills(query=query, session_id=1, count_only=True),
                 )
 
+            def adaptive_page_and_count(query, *, reset_count=False):
+                if reset_count:
+                    corpus._literal_counts.clear()
+                return corpus.search_bills(query=query, session_id=1, limit=50, include_total=True)
+
             operations = {
+                "adaptive_selective_cold": lambda: adaptive_page_and_count("Water supply", reset_count=True),
+                "adaptive_selective_repeated": lambda: adaptive_page_and_count("Water supply"),
+                "adaptive_common_cold": lambda: adaptive_page_and_count("policy", reset_count=True),
+                "adaptive_common_repeated": lambda: adaptive_page_and_count("policy"),
+                "adaptive_no_match_cold": lambda: adaptive_page_and_count("no such bill", reset_count=True),
+                "literal_no_match_cold": lambda: literal_page_and_count("no such bill", reset_count=True),
                 "session_page": lambda: corpus.search_bills(session_id=1, limit=50),
                 "literal_page_and_count_cold": lambda: literal_page_and_count("Water supply", reset_count=True),
                 "literal_page_and_count_repeated": lambda: literal_page_and_count("Water supply"),

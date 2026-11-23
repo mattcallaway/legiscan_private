@@ -63,3 +63,19 @@ A disposable SQLite experiment used the 96,000-bill fixture, a 50-row page, a se
 | Zero matches | 317.2 / 328.9 ms | 94.4 / 136.8 ms |
 
 The prototype suggests a faster cold path for selective and empty searches. The common-term median regressed, and the existing count cache already speeds up repeat searches. The next implementation should account for both paths and verify pagination, count consistency, and cold and warm latency separately before switching the UI.
+
+## Adaptive All Bills search
+
+The new code path is selected for ordinary text searches in All Bills. It first tries the ordered page with a bounded SQLite instruction budget. Broad results can usually return on that path and reuse the cached count on later reruns. If the probe reaches its budget, the query materializes the matched bill IDs and sort field once, derives the count and page from the same set, then loads full display fields for the visible rows. The original literal filter and deterministic bill-ID tiebreaker still apply. The combined query uses SQLite 3.35+ and falls back to separate queries on earlier builds. [SQLite query progress callbacks](https://www.sqlite.org/c3ref/progress_handler.html)
+
+Measured on the 96,000-bill synthetic fixture for 20 repetitions per operation. Both methods used the same session, data, and 50-row page size. Cold scenarios cleared the count cache before each iteration.
+
+| Scenario | Separate p50 / p95 | Adaptive p50 / p95 |
+| --- | ---: | ---: |
+| Selective phrase, first search | 274.8 / 301.5 ms | 96.8 / 101.9 ms |
+| Selective phrase, repeat search | 183.5 / 244.4 ms | 96.1 / 99.9 ms |
+| Common term, first search | 61.5 / 62.7 ms | 59.6 / 63.0 ms |
+| Common term, repeat search | 7.1 / 9.0 ms | 6.9 / 7.9 ms |
+| No matches, first search | 318.0 / 334.2 ms | 92.8 / 105.9 ms |
+
+The run is a local benchmark of the Python query path. Capture production-size behavior separately before generalizing the figures. Reproduce with python tools/benchmark_corpus.py --rows 96000 --repetitions 20.

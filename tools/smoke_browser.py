@@ -4,10 +4,12 @@ import os
 import site
 from pathlib import Path
 import socket
+import sqlite3
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import time
+from contextlib import closing
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -104,6 +106,32 @@ def main():
                     admin_page.get_by_text("Admin & Database Tools", exact=False).first.click()
                     expect(admin_page.get_by_role("button", name="Create user account", exact=True)).to_be_visible()
                     print("Browser smoke passed: public signup hidden and administrator enrollment available.")
+
+                    with closing(sqlite3.connect(base / "data" / "bills.db")) as fixture, fixture:
+                        fixture.execute("INSERT INTO sessions (session_id,jurisdiction,session_name) VALUES (88,'CA','Fixture')")
+                        fixture.executemany(
+                            """INSERT INTO bills (bill_id, session_id, jurisdiction, bill_number, title, status_date)
+                               VALUES (?,88,'CA',?,?,'2025-01-02')""",
+                            ((i, f"AB {i}", "Water policy unique hearing" if i == 1 else "Water policy")
+                             for i in range(1, 52)),
+                        )
+                    admin_page.get_by_role("button", name="All Bills", exact=False).click()
+                    search = admin_page.get_by_role("textbox", name="Global Search", exact=False)
+                    search.fill("Water policy")
+                    search.press("Enter")
+                    expect(admin_page.get_by_text("Bills 1–50 of 51", exact=True)).to_be_visible(timeout=15_000)
+                    number = admin_page.get_by_test_id("stNumberInput").filter(has_text="Results page").locator("input")
+                    number.fill("2")
+                    number.press("Enter")
+                    expect(admin_page.get_by_text("Bills 51–51 of 51", exact=True)).to_be_visible(timeout=15_000)
+                    search.fill("unique hearing")
+                    search.press("Enter")
+                    expect(admin_page.get_by_text("Bills 1–1 of 1", exact=True)).to_be_visible(timeout=15_000)
+                    search.fill("no such title")
+                    search.press("Enter")
+                    expect(admin_page.get_by_text("0 matching bills", exact=False)).to_be_visible(timeout=15_000)
+                    expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
+                    print("Browser smoke passed: search results, pagination, page clamping and empty results.")
                     browser.close()
             except Exception:
                 log.seek(0)

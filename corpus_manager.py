@@ -1230,29 +1230,79 @@ class CorpusManager:
 
     # ── Search interface (returns DataFrame matching legacy CSV schema) ────────
 
+    @staticmethod
+    def _literal_count_key(where, params):
+        # Retain a digest, not search text or bill IDs.
+        return sha256(repr((where, params)).encode("utf-8")).digest()
+
+    def _cached_literal_count(self, key, revision):
+        with self._literal_counts_lock:
+            entry = self._literal_counts.get(key)
+            if entry and entry[0] == revision and entry[1] > time.monotonic():
+                self._literal_counts.move_to_end(key)
+                return entry[2]
+        return None
+
+    def _save_literal_count(self, key, revision, total):
+        if corpus_file_revision(self.db_path) == revision:
+            with self._literal_counts_lock:
+                self._literal_counts[key] = (revision, time.monotonic() + 60, total)
+                self._literal_counts.move_to_end(key)
+                if len(self._literal_counts) > 128:
+                    self._literal_counts.popitem(last=False)
+
     def _count_bills(self, connection, where, params, *, cache):
         sql = f"SELECT COUNT(*) FROM bills b {where}"
         if not cache or connection.in_transaction:
             return connection.execute(sql, params).fetchone()[0]
-
-        # Keep only a digest and an aggregate, never stored search text or bill IDs.
-        query_key = sha256(repr((where, params)).encode("utf-8")).digest()
+        key = self._literal_count_key(where, params)
         revision = corpus_file_revision(self.db_path)
-        now = time.monotonic()
-        with self._literal_counts_lock:
-            entry = self._literal_counts.get(query_key)
-            if entry and entry[0] == revision and entry[1] > now:
-                self._literal_counts.move_to_end(query_key)
-                return entry[2]
-
-        total = connection.execute(sql, params).fetchone()[0]
-        if corpus_file_revision(self.db_path) == revision:
-            with self._literal_counts_lock:
-                self._literal_counts[query_key] = (revision, now + 60, total)
-                self._literal_counts.move_to_end(query_key)
-                if len(self._literal_counts) > 128:
-                    self._literal_counts.popitem(last=False)
+        total = self._cached_literal_count(key, revision)
+        if total is None:
+            total = connection.execute(sql, params).fetchone()[0]
+            self._save_literal_count(key, revision, total)
         return total
+
+    @staticmethod
+    def _probe_search_page(connection, sql, params):
+        # Common terms can finish an ordinary ordered page with little work.
+        connection.set_progress_handler(lambda: 1, 20_000)
+        try:
+            return connection.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as error:
+            if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_INTERRUPT:
+                raise
+            return None
+        finally:
+            connection.set_progress_handler(None, 0)
+
+    def _literal_page_and_count(self, connection, where, params, page_sql, page_args, combined_sql):
+        key = self._literal_count_key(where, params)
+        revision = corpus_file_revision(self.db_path)
+        total = self._cached_literal_count(key, revision)
+        probe_needed = True
+        if total is not None:
+            rows = self._probe_search_page(connection, page_sql, page_args) if total else []
+            if rows is not None and corpus_file_revision(self.db_path) == revision:
+                return total, pd.DataFrame([dict(row) for row in rows])
+            probe_needed = rows is not None
+
+        with connection:
+            connection.execute("BEGIN")
+            rows = self._probe_search_page(connection, page_sql, page_args) if probe_needed else None
+            if rows is None:
+                combined = connection.execute(combined_sql, page_args).fetchall()
+                total = combined[0]["_total"]
+                rows = []
+                for row in combined:
+                    if row["bill_id"] is not None:
+                        values = dict(row)
+                        del values["_total"]
+                        rows.append(values)
+            else:
+                total = self._count_bills(connection, where, params, cache=False)
+        self._save_literal_count(key, revision, total)
+        return total, pd.DataFrame([dict(row) for row in rows])
 
     @_corpus_operation
     def search_bills(
@@ -1275,7 +1325,8 @@ class CorpusManager:
         sort="Status Date (Newest)",
         offset=0,
         count_only=False,
-    ) -> pd.DataFrame | int:
+        include_total=False,
+    ) -> pd.DataFrame | int | tuple[int, pd.DataFrame]:
         """
         Search the master corpus.
 
@@ -1287,7 +1338,7 @@ class CorpusManager:
         _render_bill_expander(), filter, and export code works unchanged.
 
         jurisdiction_filter entries may be friendly names ("California") or
-        jurisdiction codes ("CA").
+        jurisdiction codes ("CA"). With include_total, return (total, page).
         """
         conn = self._get_conn()
         conditions: list[str] = []
@@ -1364,18 +1415,18 @@ class CorpusManager:
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
+        cache_count = bool(query) and bill_ids is None and not excluded_bill_ids
         if count_only:
-            cache = bool(query) and bill_ids is None and not excluded_bill_ids
-            return self._count_bills(conn, where, params, cache=cache)
+            return self._count_bills(conn, where, params, cache=cache_count)
 
-        order_by = {
-            "Most Recent Action": "b.last_action_date DESC",
-            "Status Date (Newest)": "b.status_date DESC",
-            "Bill Number A→Z": "b.bill_number COLLATE NOCASE ASC",
-            "Status Stage": "b.status_stage ASC",
-        }.get(sort, "b.status_date DESC")
-        sql = f"""
-            SELECT
+        sort_field, direction = {
+            "Most Recent Action": ("last_action_date", "DESC"),
+            "Status Date (Newest)": ("status_date", "DESC"),
+            "Bill Number A→Z": ("bill_number", "COLLATE NOCASE ASC"),
+            "Status Stage": ("status_stage", "ASC"),
+        }.get(sort, ("status_date", "DESC"))
+        order_by = f"b.{sort_field} {direction}, b.bill_id"
+        fields = """
                 b.bill_id,
 
                 -- ── Jurisdiction columns (same names as legacy CSV) ──
@@ -1419,17 +1470,37 @@ class CorpusManager:
                 )                                          AS keyword,
 
                 s.session_name                             AS session
-
+        """
+        sql = f"""
+            SELECT {fields}
             FROM bills b
             LEFT JOIN sessions s ON b.session_id = s.session_id
             {where}
-            ORDER BY {order_by}, b.bill_id
+            ORDER BY {order_by}
             LIMIT ? OFFSET ?
         """
-        params.extend([-1 if limit is None else limit, offset])
+        page_args = [*params, -1 if limit is None else limit, offset]
+
+        if include_total:
+            if cache_count and limit is not None and not conn.in_transaction and sqlite3.sqlite_version_info >= (3, 35):
+                combined = f"""
+                    WITH matches AS MATERIALIZED (
+                        SELECT b.bill_id, b.{sort_field} FROM bills b {where}
+                    ), page AS MATERIALIZED (
+                        SELECT b.bill_id FROM matches b ORDER BY {order_by} LIMIT ? OFFSET ?
+                    ), totals AS (SELECT COUNT(*) AS total FROM matches)
+                    SELECT totals.total AS _total, {fields}
+                    FROM totals LEFT JOIN page ON 1
+                    LEFT JOIN bills b ON b.bill_id=page.bill_id
+                    LEFT JOIN sessions s ON s.session_id=b.session_id
+                    ORDER BY {order_by}
+                """
+                return self._literal_page_and_count(conn, where, params, sql, page_args, combined)
+            total = self._count_bills(conn, where, params, cache=cache_count)
+            return total, pd.DataFrame([dict(row) for row in conn.execute(sql, page_args)])
 
         try:
-            rows = conn.execute(sql, params).fetchall()
+            rows = conn.execute(sql, page_args).fetchall()
         except Exception as exc:
             logger.error(f"search_bills SQL error: {exc}")
             return pd.DataFrame()

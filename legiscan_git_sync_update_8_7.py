@@ -1980,16 +1980,24 @@ elif "All Bills" in app_mode:
                     bill_ids=note_ids,
                     sort=st.session_state.global_sort,
                 )
-                total = corpus.search_bills(**filters, count_only=True)
+                page_size = 50
+                page_key = "historical_search_page"
+                requested_page = st.session_state.get(page_key, 1)
+                bills = None
+                if filters["query"] and note_ids is None:
+                    total, bills = corpus.search_bills(
+                        **filters, limit=page_size, offset=(requested_page - 1) * page_size, include_total=True,
+                    )
+                else:
+                    total = corpus.search_bills(**filters, count_only=True)
                 run_smart_header(total, "All Bills", corpus, tracked_bills)
                 if total:
-                    page_size = 50
                     page_count = (total + page_size - 1) // page_size
-                    page_key = "historical_search_page"
-                    st.session_state[page_key] = min(st.session_state.get(page_key, 1), page_count)
+                    st.session_state[page_key] = min(requested_page, page_count)
                     page = st.number_input("Results page", min_value=1, max_value=page_count, step=1, key=page_key)
                     offset = (page - 1) * page_size
-                    bills = corpus.search_bills(**filters, limit=page_size, offset=offset)
+                    if bills is None or page != requested_page:
+                        bills = corpus.search_bills(**filters, limit=page_size, offset=offset)
                     st.caption(f"Bills {offset + 1:,}–{offset + len(bills):,} of {total:,}")
                     render_bill_page(bills, bill_notes, tracked_bills, "ab")
                     if st.button("Prepare full search export", key="prepare_historical_export"):

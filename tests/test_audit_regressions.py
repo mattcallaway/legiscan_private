@@ -1366,3 +1366,56 @@ class LiteralSearchCountCacheTests(TestCase):
                 self.assertEqual(corpus.search_bills(query="water", count_only=True), 0)
                 self.assertEqual(corpus.search_bills(query="water", count_only=True), 0)
                 self.assertEqual(sum(sql.startswith("SELECT COUNT(*) FROM bills b") for sql in trace), 7)
+
+
+class AdaptiveLiteralSearchTests(TestCase):
+    def test_slow_pages_use_one_matching_set_and_preserve_sort_filters_and_total(self):
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory) / "bills.db"), "")
+            with corpus.connection() as conn, conn:
+                conn.execute("INSERT INTO sessions (session_id, jurisdiction) VALUES (9, 'CA'), (10, 'US')")
+                conn.executemany(
+                    """INSERT INTO bills (bill_id, session_id, jurisdiction, bill_number, title,
+                                          status_date, last_action_date, status_stage)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        (1, 9, "CA", "AB 3", "water", "2025-01-02", "2025-01-03", "2"),
+                        (2, 9, "CA", "ab 2", "Water", "2025-01-02", "2025-01-04", "1"),
+                        (3, 9, "CA", "AB 2", "Water utility", "2025-01-02", "2025-01-03", "2"),
+                        (4, 9, "CA", "AB 1", "Water", "2025-01-03", "2025-01-02", "2"),
+                        (5, 10, "US", "HR 1", "Water", "2025-01-04", "2025-01-05", "2"),
+                    ),
+                )
+                conn.executemany("INSERT INTO keyword_matches (bill_id, keyword) VALUES (?, 'Water policy')",
+                                 [(id_,) for id_ in (1, 2, 3, 5)])
+            for sort in ("Status Date (Newest)", "Most Recent Action", "Bill Number A\u2192Z", "Status Stage"):
+                filters = {"query": "water", "session_id": 9, "keyword_filter": ["WATER POLICY"], "sort": sort}
+                with self.subTest(sort=sort), patch.object(corpus, "_probe_search_page", return_value=None):
+                    for offset in (0, 1, 40):
+                        baseline = corpus.search_bills(**filters, limit=2, offset=offset)
+                        total, actual = corpus.search_bills(**filters, limit=2, offset=offset, include_total=True)
+                        self.assertEqual(total, 3)
+                        pd.testing.assert_frame_equal(actual, baseline)
+
+    def test_probe_keeps_easy_page_fast_and_interrupts_expensive_page_only(self):
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory) / "bills.db"), "")
+            with corpus.connection() as conn, conn:
+                conn.execute("INSERT INTO sessions (session_id, jurisdiction) VALUES (9, 'CA')")
+                conn.executemany(
+                    "INSERT INTO bills (bill_id, session_id, title, status_date) VALUES (?, 9, 'Water in California', '2025-01-02')",
+                    ((i,) for i in range(1, 2400)),
+                )
+            with corpus.connection() as conn:
+                statements = []
+                conn.set_trace_callback(statements.append)
+                total, page = corpus.search_bills(query="water", session_id=9, limit=5, include_total=True)
+                self.assertEqual(total, 2399)
+                self.assertEqual(page["bill_id"].tolist(), list(range(1, 6)))
+                self.assertFalse(any("WITH matches AS MATERIALIZED" in sql for sql in statements))
+                statements.clear()
+                total, empty = corpus.search_bills(query="No matching bills", session_id=9, limit=5, include_total=True)
+                self.assertEqual(total, 0)
+                self.assertTrue(empty.empty)
+                self.assertTrue(any("WITH matches AS MATERIALIZED" in sql for sql in statements))
+                self.assertEqual(corpus.search_bills(count_only=True), 2399)
