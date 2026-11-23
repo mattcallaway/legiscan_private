@@ -21,3 +21,7 @@ This audit checkpoint is ready for continued local development. It does not cert
 - Local browser: Edge passed guest entry, dashboard navigation, historical coverage, calendar and custom labels after waiting for the save confirmation. The first run exposed a browser rerun race in the check.
 - Static checks: targeted Ruff and regenerated source map passed. CI is pinned to Ubuntu 24.04 and separates browser and regression jobs. GitHub execution of this workflow remains pending publication.
 - Production remains at the previously verified baseline. No real provider email, synthetic live account changes, or full comparative benchmark was performed for this checkpoint.
+
+## Experimental branch checkpoint
+
+The local improved-exp corpus connection change passed 45 regression tests including isolated PostgreSQL with simulated delivery, and the browser smoke test passed. The synthetic benchmark recorded the connection lifecycle cost. There is no new explicit data migration for the change. GitHub Actions and production deployment are separate checks.

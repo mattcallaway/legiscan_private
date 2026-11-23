@@ -970,3 +970,52 @@ class LoginBudgetTests(TestCase):
                 for _ in range(auth.LOGIN_ATTEMPT_LIMIT - 1):
                     self.assertFalse(auth.login_user("researcher", "incorrect")[0])
                 self.assertTrue(auth.login_user("researcher", "right")[0])
+
+
+class CorpusConnectionIsolationTests(TestCase):
+    def test_search_thread_cannot_observe_or_close_another_threads_uncommitted_work(self):
+        from threading import Event
+
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory) / "bills.db"), "")
+            pending = Event()
+            release = Event()
+
+            def writer():
+                with corpus.connection() as connection:
+                    connection.execute("INSERT INTO bills (bill_id, title) VALUES (123, 'Water quality')")
+                    corpus._api_calls_run = 3
+                    pending.set()
+                    if not release.wait(10):
+                        raise TimeoutError("Reader did not finish")
+                    connection.commit()
+                    self.assertEqual(corpus._api_calls_run, 3)
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute("SELECT 1")
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(writer)
+                try:
+                    self.assertTrue(pending.wait(10))
+                    for _ in range(20):
+                        self.assertEqual(corpus.search_bills(query="Water quality", count_only=True), 0)
+                    with corpus.connection() as connection:
+                        with corpus.connection() as nested:
+                            self.assertIs(connection, nested)
+                    with self.assertRaises(sqlite3.ProgrammingError):
+                        connection.execute("SELECT 1")
+                    self.assertEqual(corpus._api_calls_run, 0)
+                    corpus.close()
+                finally:
+                    release.set()
+                future.result(timeout=10)
+            self.assertEqual(corpus.search_bills(query="Water quality", count_only=True), 1)
+
+    def test_failed_scope_rolls_back_before_the_next_read(self):
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory) / "bills.db"), "")
+            with self.assertRaisesRegex(ValueError, "fixture failure"):
+                with corpus.connection() as connection:
+                    connection.execute("INSERT INTO bills (bill_id) VALUES (123)")
+                    raise ValueError("fixture failure")
+            self.assertEqual(corpus.search_bills(count_only=True), 0)

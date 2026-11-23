@@ -51,8 +51,7 @@ def run(count, repetitions):
         database = Path(directory) / "benchmark.sqlite3"
         corpus = CorpusManager(str(database), "")
         try:
-            connection = corpus._get_conn()
-            with connection:
+            with corpus.connection() as connection, connection:
                 connection.executemany(
                     "INSERT INTO sessions (session_id,jurisdiction,session_name) VALUES (?,?,?)",
                     ((session, "CA" if session < 4 else "US", f"Fixture {session}") for session in range(1, 5)),
@@ -76,7 +75,8 @@ def run(count, repetitions):
                 "session_page": "SELECT bill_id FROM bills WHERE session_id=1 ORDER BY status_date DESC,bill_id LIMIT 50",
                 "status_date_range": "SELECT bill_id FROM bills WHERE substr(status_date,1,10) BETWEEN '2025-01-01' AND '2025-02-01'",
             }.items():
-                plans[name] = [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}")]
+                with corpus.connection() as connection:
+                    plans[name] = [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}")]
             return {
                 "platform": platform.platform(),
                 "python": platform.python_version(),

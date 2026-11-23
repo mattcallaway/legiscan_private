@@ -2,9 +2,9 @@ name: Regression tests
 
 on:
   push:
-    branches: [improved]
+    branches: [improved, improved-exp]
   pull_request:
-    branches: [improved]
+    branches: [improved, improved-exp]
 
 permissions:
   contents: read

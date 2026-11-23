@@ -13,3 +13,7 @@ The deployed entry is [legiscan_git_sync_update_8_7.py](../legiscan_git_sync_upd
 | Git and official integrations | Explicit public snapshot allowlist, Congress.gov term lookups and spreadsheet export | Preserve private data boundaries and show upstream incompleteness where available. |
 
 [requirements.txt](../requirements.txt) declares dependencies and [requirements.lock](../requirements.lock) pins the Python 3.12 environment with hashes. [installation.json](installation.json) maps processes, credentials and dependencies. The baseline VPS ran a single systemd Streamlit service with a private persistent filesystem. Multiple web processes require explicit account and database coordination review. Production email was unconfigured at the observed checkpoint. CI run evidence is recorded in release acceptance.
+
+## Corpus connection ownership on improved-exp
+
+The Streamlit resource can cache a CorpusManager across users with the same configured key. Each operation borrows a connection owned by its own thread. Nested operations reuse that connection until the outer scope exits, when it closes. Transactions keep their existing explicit commit boundaries. Uncommitted work is rolled back when a scope closes. Schema additions are performed under a write transaction and WAL is set during initialization. The incremental refresh batch keeps its separate write connection. API request accounting is stored per thread.

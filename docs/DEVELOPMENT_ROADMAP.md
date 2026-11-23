@@ -15,3 +15,7 @@ Develop on `improved`. Use `main` solely as a legacy comparison. Prioritize veri
 | 8 · Release | Production acceptance, restore rehearsal, deployment and measured comparative workflow | Authorized access, test credentials, realistic tasks, readiness gates | High | Document exact deployment, backups, performance, production acceptance and rollback. Prior deployment smoke available; new code stays local until authorized for release. |
 
 See [audit findings](AUDIT_FINDINGS.md), [test matrix](TEST_MATRIX.md), [baseline](PERFORMANCE_BASELINE.md), and [release acceptance](RELEASE_ACCEPTANCE.md). No production provider testing is possible from the current workspace without separate environment access and credentials.
+
+## Experimental branch
+
+Development and subsequent follow-up commits from the master brief are now staged on improved-exp. The improved branch remains the pre-experiment release line. The first persistence change isolates CorpusManager connections and API accounting across concurrent threads. Production cutover, staff storage review, explicit versioned migrations, and measured concurrent throughput remain open.

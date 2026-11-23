@@ -51,7 +51,10 @@ import os
 import sqlite3
 import time
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from functools import wraps
+from threading import local
 from typing import Callable, Optional
 
 import requests
@@ -286,6 +289,14 @@ CREATE TABLE IF NOT EXISTS people_mapping (
 
 
 # ── CorpusManager ──────────────────────────────────────────────────────────────
+def _corpus_operation(method):
+    @wraps(method)
+    def run(self, *args, **kwargs):
+        with self.connection():
+            return method(self, *args, **kwargs)
+    return run
+
+
 class CorpusManager:
     """Manages the local SQLite master bill corpus."""
 
@@ -300,25 +311,50 @@ class CorpusManager:
         self.api_key          = api_key
         self.rate_limit_s     = rate_limit_s
         self.download_timeout = download_timeout
-        self._api_calls_run   = 0
-        self._conn: Optional[sqlite3.Connection] = None
+        self._thread = local()
         self._init_db()
 
     # ── Connection ────────────────────────────────────────────────────────────
 
-    def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.create_function("casefold", 1, str.casefold, deterministic=True)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-        return self._conn
+    @property
+    def _api_calls_run(self):
+        return getattr(self._thread, "api_calls", 0)
 
+    @_api_calls_run.setter
+    def _api_calls_run(self, value):
+        self._thread.api_calls = value
+
+    def _get_conn(self) -> sqlite3.Connection:
+        connection = getattr(self._thread, "connection", None)
+        if connection is None:
+            connection = sqlite3.connect(self.db_path, timeout=10)
+            try:
+                connection.row_factory = sqlite3.Row
+                connection.create_function("casefold", 1, str.casefold, deterministic=True)
+                connection.execute("PRAGMA foreign_keys=ON")
+            except BaseException:
+                connection.close()
+                raise
+            self._thread.connection = connection
+        return connection
+
+    @contextmanager
+    def connection(self):
+        """Borrow a thread-owned connection, closing it at the outer scope."""
+        owns_connection = getattr(self._thread, "connection", None) is None
+        connection = self._get_conn()
+        try:
+            yield connection
+        finally:
+            if owns_connection:
+                self.close()
+
+    @_corpus_operation
     def _init_db(self) -> None:
         conn = self._get_conn()
-        conn.executescript(_DDL)
-        
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript("BEGIN IMMEDIATE;\n" + _DDL)
+
         # Migration: add columns if they don't exist in bills table
         cur = conn.cursor()
         cur.execute("PRAGMA table_info(bills)")
@@ -368,6 +404,7 @@ class CorpusManager:
 
     # ── Session discovery ─────────────────────────────────────────────────────
 
+    @_corpus_operation
     def get_active_sessions(self, jurisdiction: str) -> list[dict]:
         """
         Fetch current sessions from LegiScan API and cache in DB.
@@ -407,6 +444,7 @@ class CorpusManager:
         conn.commit()
         return sessions_raw[:10]
 
+    @_corpus_operation
     def get_cached_sessions(self, jurisdiction: Optional[str] = None) -> list[dict]:
         """Return sessions from local DB without any API call."""
         conn = self._get_conn()
@@ -435,6 +473,7 @@ class CorpusManager:
             return []
         return data.get("datasetlist", [])
 
+    @_corpus_operation
     def bootstrap_session(
         self,
         session_id: int,
@@ -617,6 +656,7 @@ class CorpusManager:
                 (rc_id, int(p_id), v.get("vote_id"), v.get("vote_text"))
             )
 
+    @_corpus_operation
     def _ingest_zip(
         self,
         zip_bytes: bytes,
@@ -717,6 +757,7 @@ class CorpusManager:
 
     # ── Bootstrap fallback (getMasterListRaw + getBill per bill) ──────────────
 
+    @_corpus_operation
     def _bootstrap_via_masterlist(
         self,
         session_id: int,
@@ -797,6 +838,7 @@ class CorpusManager:
             self._record_bootstrap(session_id, jurisdiction)
         return stats
 
+    @_corpus_operation
     def _record_bootstrap(self, session_id: int, jurisdiction: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
@@ -809,6 +851,7 @@ class CorpusManager:
 
     # ── Incremental refresh (getMasterListRaw diff) ───────────────────────────
 
+    @_corpus_operation
     def refresh_session(
         self,
         session_id: int,
@@ -1025,6 +1068,7 @@ class CorpusManager:
         )
         return True
 
+    @_corpus_operation
     def get_bill_calendars(self, bill_ids):
         if not bill_ids:
             return {}
@@ -1039,6 +1083,7 @@ class CorpusManager:
             calendars[str(row["bill_id"])] = {"details": details, "events": [{**details, **event} for event in events]}
         return calendars
 
+    @_corpus_operation
     def calendar_refresh_candidates(self, bills, limit=25):
         if not bills:
             return []
@@ -1054,6 +1099,7 @@ class CorpusManager:
         )
         return [bills[str(row["bill_id"])] for row in ordered]
 
+    @_corpus_operation
     def refresh_tracked_calendars(self, bills, progress_cb=None):
         """Read event feeds for an explicit batch while retaining older snapshots on errors."""
         stats = {"new": 0, "updated": 0, "errors": 0, "unavailable": 0, "unchanged": 0}
@@ -1125,6 +1171,7 @@ class CorpusManager:
 
     # ── Keyword match overlay ─────────────────────────────────────────────────
 
+    @_corpus_operation
     def record_keyword_match(self, bill_id: int, keyword: str) -> None:
         """Record that a bill matched a keyword during a scan (idempotent)."""
         conn = self._get_conn()
@@ -1137,6 +1184,7 @@ class CorpusManager:
         )
         conn.commit()
 
+    @_corpus_operation
     def get_keyword_matches(self, bill_id: int) -> list[str]:
         """Return list of keywords that matched this bill."""
         rows = self._get_conn().execute(
@@ -1146,6 +1194,7 @@ class CorpusManager:
 
     # ── Search interface (returns DataFrame matching legacy CSV schema) ────────
 
+    @_corpus_operation
     def search_bills(
         self,
         query: str = "",
@@ -1330,12 +1379,14 @@ class CorpusManager:
 
     # ── Bulk bill lookup by bill_id ───────────────────────────────────────────
 
+    @_corpus_operation
     def indexed_bill_ids(self, bill_ids):
         return {str(row[0]) for row in self._get_conn().execute(
             "SELECT bill_id FROM bills WHERE bill_id IN (SELECT value FROM json_each(?))",
             (json.dumps(list(bill_ids)),),
         )}
 
+    @_corpus_operation
     def get_bills_by_ids(self, bill_ids: list) -> "pd.DataFrame":
         """
         Return a DataFrame of bills whose bill_id is in the provided list.
@@ -1379,6 +1430,7 @@ class CorpusManager:
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
+    @_corpus_operation
     def get_historical_coverage(self):
         """Report indexed and cached material for each discovered CA or US session."""
         return pd.read_sql_query("""
@@ -1413,6 +1465,7 @@ class CorpusManager:
             ORDER BY s.year_start DESC, s.jurisdiction, s.session_id DESC
         """, self._get_conn())
 
+    @_corpus_operation
     def get_filter_options(self):
         conn = self._get_conn()
         sponsors = {
@@ -1423,6 +1476,7 @@ class CorpusManager:
         committees = {row[0] for row in conn.execute("SELECT DISTINCT committee FROM bills WHERE committee <> ''")}
         return sponsors, committees
 
+    @_corpus_operation
     def get_corpus_stats(self) -> dict:
         """Return summary statistics about the local corpus (no API calls)."""
         conn = self._get_conn()
@@ -1443,6 +1497,7 @@ class CorpusManager:
             "schema_version":      self._meta_get("schema_version"),
         }
 
+    @_corpus_operation
     def get_all_session_jurisdictions(self) -> list[str]:
         """Return distinct jurisdiction codes that have cached sessions."""
         rows = self._get_conn().execute(
@@ -1453,12 +1508,14 @@ class CorpusManager:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        connection = getattr(self._thread, "connection", None)
+        if connection is not None:
+            connection.close()
+            del self._thread.connection
 
     # ── Roll Call & People API ────────────────────────────────────────────────
 
+    @_corpus_operation
     def get_roll_calls_for_bill(self, bill_id: int) -> list[dict]:
         """Fetch all roll call metrics for a given bill."""
         conn = self._get_conn()
@@ -1488,6 +1545,7 @@ class CorpusManager:
             "pm.staff_legislator_id = ? AND pm.match_quality IN ('Verified Name and Jurisdiction', 'Manual verified')", (staff_legislator_id,),
         )
 
+    @_corpus_operation
     def get_votes_for_legislator_by_name(self, first_name: str, last_name: str, jurisdiction=None, profile_id=None) -> list[dict]:
         """Use a unique full-name match when an identity link is unavailable."""
         if not first_name or not last_name:
@@ -1517,6 +1575,7 @@ class CorpusManager:
             params += (jurisdiction,)
         return self._get_legislator_votes("", where, params)
 
+    @_corpus_operation
     def _get_legislator_votes(self, identity_join, condition, params):
         rows = self._get_conn().execute(f"""
             SELECT rc.roll_call_id, lv.vote_text, rc.date AS vote_date,
@@ -1533,6 +1592,7 @@ class CorpusManager:
         """, params).fetchall()
         return [dict(row) for row in rows]
 
+    @_corpus_operation
     def get_staff_cross_reference(self, staff_name: str) -> list[dict]:
         """
         Find all legislators a given staff member works under,
@@ -1548,6 +1608,7 @@ class CorpusManager:
         return [dict(r) for r in rows]
 
         
+    @_corpus_operation
     def sync_people_mapping(self, staff_df):
         """Link recorded voters to a unique directory identity in the same jurisdiction."""
         from staff_manager import normalize_name_components
@@ -1614,6 +1675,7 @@ class CorpusManager:
     def get_federal_member_votes(self, people_id):
         return self._get_legislator_votes("", "lv.people_id = ? AND b.jurisdiction = 'US'", (people_id,))
 
+    @_corpus_operation
     def list_vote_identities(self, query="", *, include_linked=False, limit=100, jurisdiction=None):
         return [dict(row) for row in self._get_conn().execute(
             """SELECT p.people_id, p.name, p.chamber, p.district,
@@ -1635,6 +1697,7 @@ class CorpusManager:
             (query, query, jurisdiction, jurisdiction, include_linked, limit),
         )]
 
+    @_corpus_operation
     def review_vote_identity(self, people_id, profile=None):
         """Persist an admin decision separately from automated name matching."""
         conn = self._get_conn()
@@ -1658,6 +1721,7 @@ class CorpusManager:
                  "Manual verified" if profile else "Manual excluded"),
             )
 
+    @_corpus_operation
     def get_people_mapping_stats(self) -> dict:
         conn = self._get_conn()
         total = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
@@ -1681,6 +1745,7 @@ class CorpusManager:
                 versions[int(text["doc_id"])] = text
         return sorted(versions.values(), key=lambda item: (item.get("date") or "", int(item["doc_id"])))
 
+    @_corpus_operation
     def get_bill_text(self, bill_id: int, doc_id: Optional[int] = None) -> Optional[dict]:
         """
         Get the full text of a bill. Uses local cache in bill_texts table if present.

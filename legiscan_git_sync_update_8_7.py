@@ -375,10 +375,11 @@ def get_corpus_status_options(corpus) -> list:
     if corpus is None:
         return []
     try:
-        rows = corpus._get_conn().execute(
-            "SELECT DISTINCT status_stage FROM bills "
-            "WHERE status_stage IS NOT NULL ORDER BY CAST(status_stage AS INTEGER)"
-        ).fetchall()
+        with corpus.connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT status_stage FROM bills "
+                "WHERE status_stage IS NOT NULL ORDER BY CAST(status_stage AS INTEGER)"
+            ).fetchall()
         return [r[0] for r in rows if r[0]]
     except Exception:
         return []
@@ -1278,14 +1279,15 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
 
             if st.session_state.get("show_diagnostics", False):
                 st.info("Gathering database forensics...")
-                conn = corpus._get_conn()
-                db_stats = {
-                    "roll_calls":     conn.execute("SELECT COUNT(*) FROM roll_calls").fetchone()[0],
-                    "leg_votes":      conn.execute("SELECT COUNT(*) FROM legislator_votes").fetchone()[0],
-                    "people_total":   conn.execute("SELECT COUNT(*) FROM people").fetchone()[0],
-                    "people_unknown": conn.execute("SELECT COUNT(*) FROM people WHERE name LIKE '%Unknown Profile%'").fetchone()[0],
-                    "people_mapped":  conn.execute("SELECT COUNT(*) FROM people_mapping").fetchone()[0],
-                }
+                with corpus.connection() as conn:
+                    db_stats = {
+                        "roll_calls":     conn.execute("SELECT COUNT(*) FROM roll_calls").fetchone()[0],
+                        "leg_votes":      conn.execute("SELECT COUNT(*) FROM legislator_votes").fetchone()[0],
+                        "people_total":   conn.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+                        "people_unknown": conn.execute("SELECT COUNT(*) FROM people WHERE name LIKE '%Unknown Profile%'").fetchone()[0],
+                        "people_mapped":  conn.execute("SELECT COUNT(*) FROM people_mapping").fetchone()[0],
+                    }
+                    sample = conn.execute("SELECT people_id, name, party FROM people WHERE name LIKE '%Unknown Profile%' LIMIT 10").fetchall()
                 st.write(f"**Roll Calls Stored:** {db_stats['roll_calls']:,}")
                 st.write(f"**Individual Votes Stored:** {db_stats['leg_votes']:,}")
                 st.write(f"**People Profiles Extracted:** {db_stats['people_total']:,}")
@@ -1293,7 +1295,6 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                 st.write(f"**Profiles Mapped to Staff Roster:** {db_stats['people_mapped']:,}")
 
                 st.caption("Recent Failed Name Extracts & Fallbacks:")
-                sample = conn.execute("SELECT people_id, name, party FROM people WHERE name LIKE '%Unknown Profile%' LIMIT 10").fetchall()
                 if sample:
                     st.dataframe(pd.DataFrame([dict(s) for s in sample]), use_container_width=True)
                 else:
