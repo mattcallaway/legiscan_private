@@ -130,7 +130,7 @@ Open [the local app](http://localhost:8501) unless your terminal prints a differ
 | `API_KEY` | App and ingestion processes | Server LegiScan API key. Required for current bill ingestion and shared keyword scanning. |
 | `CONGRESS_API_KEY` | App | Optional Congress.gov key for federal term lookup. |
 | `LEGISCAN_BACKGROUND_JOBS` | App | Optional `1`, `true`, or `yes` queues supported jobs for a separately started worker. |
-| `LEGISCAN_JOB_REQUEST_LIMIT` | Ingestion execution | Optional positive integer number of LegiScan requests per ingestion job. Monitor provider-period quotas separately. |
+| `LEGISCAN_JOB_REQUEST_LIMIT` | Ingestion execution | Optional positive integer number of LegiScan requests per ingestion job. The shared monthly budget also applies. |
 | `NOTIFICATION_DATABASE_URL` | App, email schema setup and sender | Optional PostgreSQL DSN for notifications. |
 | `RESEND_API_KEY` | App, email schema setup and sender | Optional sending key for notifications. |
 | `RESEND_FROM_EMAIL` | App, email schema setup and sender | Optional verified sender such as `Tracker <alerts@example.org>`. |
@@ -252,6 +252,41 @@ On macOS, use absolute paths and an explicit account in launchd or a managed pro
 4. The UI and current-session worker route stop if the bulk dataset is unavailable. Direct CLI `bootstrap` can fall back to per-bill calls, which may be expensive. Use a deliberate request limit if using that path.
 5. Incomplete refreshes can keep successfully committed bill data while leaving the last-successful timestamp in place. Inspect the job outcome and follow up on vote or source errors.
 
+### API quota and refresh cadence
+
+Open **API Quota** as an administrator to see usage for the configured server key, a daily chart, and a breakdown by workflow and API operation. The app defaults to **10,000 requests per key per Pacific calendar month**, with the last **2,000 reserved for session discovery, bulk imports, and bill refreshes**. Optional keyword scans, manual hearing checks, and uncached interactive lookups defer when only the reserve is left. Local browsing, saved data, and cached documents remain available. Change the limit and reserve in **Budget and schedule** to match your operating plan. [LegiScan Public API](https://legiscan.com/legiscan/)
+
+The web app, worker, and CLI share `DATA_DIR/legiscan_quota.db`. They account for each attempted request before making it, including attempts that time out or are refused. A credential used in multiple places in the app shares one allowance. Personal keys use separate counters with the same policy. The ledger stores hashes of keys and aggregated counts, and the dashboard shows the configured server key’s totals. Use the same active code release and `DATA_DIR` for every process that uses the key.
+
+Compare the dashboard with your **LegiScan API profile**. Enter the provider’s current total when you first enable accounting, after rotating a key on the same account, or when you use it outside the app. The tracker adds the portion beyond its locally counted requests. A later lower reading preserves the prior adjustment for that month. LegiScan’s own total and billing window govern actual provider access. The tracker temporarily pauses a credential after a quota, key, or access refusal to limit repeated requests. [LegiScan API profile](https://legiscan.com/legiscan/)
+
+During active periods, run `python cli.py --task scheduled-refresh --states CA,US` once each Pacific weekday from a scheduler. The task skips weekends and sessions that already completed a refresh that day. **Pause scheduled weekday refreshes** pauses this task during recess, while manual sync stays available under the same quota. Current sessions use bulk import on initial loading and incremental changes afterward. Select older sessions manually when needed.
+
+On the Linux host, an optional `policy-trackr-bills.service` and `policy-trackr-bills.timer` can run that command. Replace `/path/to/active-release` and the environment file with the same paths used by the live app. Update the service path when switching releases.
+
+```ini
+# /etc/systemd/system/policy-trackr-bills.service
+[Service]
+Type=oneshot
+User=streamlit
+Group=streamlit
+WorkingDirectory=/path/to/active-release
+EnvironmentFile=/etc/policy-trackr-improved.env
+ExecStart=/path/to/active-release/.venv/bin/python cli.py --task scheduled-refresh --states CA,US
+```
+
+```ini
+# /etc/systemd/system/policy-trackr-bills.timer
+[Timer]
+OnCalendar=Mon..Fri *-*-* 07:00:00 America/Los_Angeles
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+After installing both files, run `sudo systemctl daemon-reload` and `sudo systemctl enable --now policy-trackr-bills.timer`. Inspect its next run with `systemctl list-timers policy-trackr-bills.timer`. Use **Topic Inbox** and **Civic Tags** for routine discovery. For upstream keyword searches, select a subset of shared keywords in **Keyword Rescan** or run `python cli.py --task rescan --states CA,US --keyword water` weekly or on demand. Repeat `--keyword` for more configured terms. The scanner reuses local bill details when the revision matches. Manual hearing checks reuse recent snapshots for three hours. [LegiScan API polling guidance](https://api.legiscan.com/dl/LegiScan_API_User_Manual.pdf#page=7)
+
 ### Staff directory import and vote identities
 
 1. Open **Staff Intelligence** in the admin tools. Preview the live Capitol Matrix source or upload an authorized `.xlsx`. The expected tabs are `Assembly`, `Senate`, `Asm Issues`, `Sen Issues`, `Asm Cmte Staff`, and `Sen Cmte Staff`.
@@ -269,6 +304,8 @@ Use the installed environment's Python from the checkout. Substitute the numeric
 | `python cli.py --help` | List accepted flags. |
 | `python cli.py --task refresh --jurisdiction CA --session-id SESSION_ID` | Refresh a California session. |
 | `python cli.py --task refresh --jurisdiction US --session-id SESSION_ID` | Refresh a federal session. |
+| `python cli.py --task sync-current --states CA,US` | Import or refresh the selected current sessions now. |
+| `python cli.py --task scheduled-refresh --states CA,US` | Run the weekday current-session refresh with the schedule pause and daily freshness check. |
 | `python cli.py --task bootstrap --jurisdiction CA --session-id SESSION_ID` | Bootstrap with possible per-bill fallback. |
 | `python cli.py --task rescan --states CA,US` | Refresh the shared keyword snapshot. The default is CA when omitted. |
 | `python cli.py --task worker` | Run the queue worker continuously. |
@@ -283,7 +320,7 @@ Schedule incremental refreshes with a cadence that fits quota and the upstream u
 
 ### Back up the complete installation state
 
-- Protect the entire private `DATA_DIR`, including hidden files and nested directories. It holds `bills.db`, `staff.db`, `jobs.db`, the account store, shared keyword data, personal watchlists, notes, private workspace SQLite files, JSON recovery copies and uploads. Use a consistent filesystem snapshot or stop all writers before copying. Preserve SQLite journal sidecars when they belong to the captured state.
+- Protect the entire private `DATA_DIR`, including hidden files and nested directories. It holds `bills.db`, `staff.db`, `jobs.db`, `legiscan_quota.db`, the account store, shared keyword data, personal watchlists, notes, private workspace SQLite files, JSON recovery copies and uploads. Use a consistent filesystem snapshot or stop all writers before copying. Preserve SQLite journal sidecars when they belong to the captured state.
 - Back up the PostgreSQL database separately when alerts are enabled. Example with a compatible client and secure client credentials already configured: `pg_dump --dbname=tracker_notifications --format=custom --file=notifications.dump`. Inspect with `pg_restore --list notifications.dump` and rehearse into a separate database. Use the provider's host and TLS options. [pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html) · [pg_restore](https://www.postgresql.org/docs/current/app-pgrestore.html)
 - Record the application commit, resolved Python packages, host service configuration, and references to secrets. Restrict access to all backup media. The files can contain password hashes, personal API keys, email addresses, unpublished notes and private attachments.
 

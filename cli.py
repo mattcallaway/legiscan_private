@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import sqlite3
@@ -7,25 +8,37 @@ import time
 
 from config import DATA_DIR, API_KEY
 from corpus_manager import CorpusManager
+from hearing_calendar import legislative_today
 from legiscanner import US_STATES
 from job_manager import JobManager
-from job_runner import execute_next_job, run_bootstrap_job, run_refresh_job, run_rescan_job
+from job_runner import (execute_next_job, run_bootstrap_job, run_refresh_job, run_rescan_job,
+                        scheduled_current_refresh, sync_selected_sessions)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Headless Task Runner for Legiscan Updater")
-    parser.add_argument("--task", type=str, required=True, choices=["bootstrap", "refresh", "rescan", "worker", "notification-setup", "notifications", "civic-tags"], help="The pipeline job to execute")
+    parser.add_argument("--task", type=str, required=True,
+                        choices=["bootstrap", "refresh", "sync-current", "scheduled-refresh", "rescan", "worker",
+                                 "notification-setup", "notifications", "civic-tags"], help="The pipeline job to execute")
     parser.add_argument("--session-id", type=int, help="Target session ID for bootstrap/refresh")
     parser.add_argument("--jurisdiction", type=str, help="Target jurisdiction code for bootstrap/refresh (e.g. CA, US)")
     parser.add_argument("--states", type=str, help="Comma-separated state codes for rescan (e.g., CA,NY,US)")
+    parser.add_argument("--keyword", action="append", help="Limit rescan to this configured shared keyword. Repeat to select several.")
     
     parser.add_argument("--once", action="store_true", help="Worker: process at most one queued job and exit.")
     args = parser.parse_args()
     
     if args.task == "worker" and (not DATA_DIR or not API_KEY):
         parser.error("The worker requires DATA_DIR and a server API_KEY.")
+
+    if args.task in {"sync-current", "scheduled-refresh"}:
+        jurisdictions = list(dict.fromkeys(code.strip().upper() for code in (args.states or "CA,US").split(",")))
+        if any(code not in {"CA", "US"} for code in jurisdictions):
+            parser.error("Current-session sync supports CA, US, or CA,US.")
+        if not DATA_DIR or not API_KEY.strip():
+            parser.error("Current-session sync requires DATA_DIR and a server API_KEY.")
 
     if args.task == "civic-tags":
         from civic_index import rebuild_civic_index
@@ -66,6 +79,14 @@ def main():
     corpus = CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
     
     try:
+        if args.task in {"sync-current", "scheduled-refresh"}:
+            if args.task == "scheduled-refresh":
+                outcomes = scheduled_current_refresh(corpus, jurisdictions, job_manager)
+            else:
+                outcomes = sync_selected_sessions(corpus, jurisdictions, legislative_today().year, job_manager)
+            print(json.dumps(outcomes, indent=2))
+            return int(any("error" in outcome or outcome.get("stats", {}).get("errors") for outcome in outcomes.values()))
+
         if args.task == "worker":
             logger.info("Waiting for queued sync jobs.")
             while True:
@@ -105,7 +126,8 @@ def main():
                 if code not in US_STATES and code not in {"ALL", "US"}:
                     parser.error(f"Unknown jurisdiction: {state!r}")
                 states.append(code)
-            stats = run_rescan_job(corpus, list(dict.fromkeys(states)), DATA_DIR, job_manager, initiated_by="cli")
+            stats = run_rescan_job(corpus, list(dict.fromkeys(states)), DATA_DIR, job_manager,
+                                   initiated_by="cli", keywords=args.keyword)
             if stats["api_status"] == "error":
                 return 1
 

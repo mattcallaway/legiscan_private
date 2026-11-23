@@ -1,18 +1,92 @@
 """Independent views rendered by the tracker entry point."""
 
+from datetime import datetime
 import logging
 import os
+import sqlite3
 
 import pandas as pd
 
 import streamlit as st
 
-from hearing_calendar import calendar_refresh_failure_summary, export_calendar, legislative_today, upcoming_calendar_events
+from hearing_calendar import PACIFIC, calendar_refresh_failure_summary, export_calendar, legislative_today, upcoming_calendar_events
 from job_runner import run_calendar_refresh
 from legiscanner import US_STATES
 from notifications import ACTIVITY_LABELS, Notifications, account_owner, enabled_config
+from request_budget import quota_for_directory
 
 logger = logging.getLogger(__name__)
+
+
+def render_legiscan_quota(data_dir, server_key):
+    st.subheader("API Quota")
+    try:
+        quota = quota_for_directory(data_dir)
+        status = quota.summary(server_key)
+    except (OSError, sqlite3.Error):
+        st.error("LegiScan usage and quota controls are temporarily unavailable.")
+        return
+
+    st.caption(f'{status["month"]} · Server key · Calendar month in Pacific time')
+    if not server_key.strip():
+        st.info("Configure the server LegiScan key to see its usage.")
+    tracked, remaining, reserve = st.columns(3)
+    tracked.metric("Requests tracked by this app", f'{status["sent"]:,}')
+    remaining.metric("Monthly budget left", f'{max(0, status["monthly_limit"] - status["used"]):,}')
+    reserve.metric("Reserved for bill syncs", f'{status["reserve"]:,}')
+    st.progress(min(1.0, status["used"] / status["monthly_limit"]),
+                text=f'{status["used"]:,} of {status["monthly_limit"]:,} budgeted requests used')
+    if status["external"]:
+        st.caption(f'Includes {status["external"]:,} additional requests based on the reported LegiScan total.')
+    if status["pause"]:
+        pause = status["pause"]
+        until = datetime.fromisoformat(pause["until_utc"]).astimezone(PACIFIC)
+        st.warning(f'{pause["reason"]}. The server key is paused until {until:%b %d at %I:%M %p %Z}.')
+    elif status["used"] >= status["monthly_limit"]:
+        st.warning("The monthly budget is exhausted. Local search and previously saved data remain available.")
+    elif status["used"] >= status["monthly_limit"] - status["reserve"]:
+        st.warning("The remaining allowance is reserved for bill imports and refreshes.")
+
+    if status["breakdown"]:
+        st.markdown("#### Requests by workflow")
+        st.dataframe(pd.DataFrame([
+            {"Workflow": purpose, "API operation": operation, "Requests": count}
+            for (purpose, operation), count in status["breakdown"].most_common()
+        ]), hide_index=True)
+        st.markdown("#### Daily usage")
+        st.bar_chart(pd.DataFrame.from_dict(status["daily"], orient="index", columns=["Requests"]))
+
+    with st.form("legiscan_quota_policy"):
+        st.markdown("#### Budget and schedule")
+        monthly_limit = st.number_input("Monthly request limit per API key", min_value=1, step=1,
+                                        value=status["monthly_limit"])
+        reserved = st.number_input("Requests reserved for bill syncs", min_value=0, step=1, value=status["reserve"])
+        paused = st.checkbox("Pause scheduled weekday refreshes", value=bool(status["pause_schedule"]))
+        st.caption("Manual imports and refreshes remain available during a scheduled pause, subject to the budget.")
+        if st.form_submit_button("Save quota settings"):
+            try:
+                quota.set_policy(monthly_limit, reserved, paused)
+            except (ValueError, OSError, sqlite3.Error) as error:
+                st.error(str(error) if isinstance(error, ValueError) else "Could not save quota settings.")
+            else:
+                st.toast("Quota settings saved")
+                st.rerun()
+
+    st.link_button("Open LegiScan API profile", "https://legiscan.com/legiscan/")
+    with st.form("legiscan_provider_usage"):
+        st.markdown("#### Account for earlier or external usage")
+        st.caption("Enter the total used shown by LegiScan for the server key and current period. "
+                   "Use this when first enabling the tracker, rotating a key on the same account, "
+                   "or using the key from another tool.")
+        used = st.number_input("Total queries used, as reported by LegiScan", min_value=0, step=1, value=status["used"])
+        if st.form_submit_button("Record provider total", disabled=not server_key.strip()):
+            try:
+                quota.record_provider_usage(server_key, used)
+            except (ValueError, OSError, sqlite3.Error):
+                st.error("Could not record the provider total.")
+            else:
+                st.toast("Provider total recorded")
+                st.rerun()
 
 
 def render_email_notifications(username, current_user):
@@ -196,7 +270,7 @@ def render_hearing_calendar(corpus, tracked_bills, job_manager, username, *,
                 }
                 batch = corpus.calendar_refresh_candidates(bills)
                 if not batch:
-                    st.caption("Calendars already checked in the past 30 minutes are skipped.")
+                    st.caption("Calendars checked within the past three hours are skipped.")
                 if st.button("Check up to 25 tracked bills", key="refresh_hearing_calendars", disabled=not batch):
                     use_worker = is_admin and os.environ.get("LEGISCAN_BACKGROUND_JOBS", "").lower() in {"1", "true", "yes"}
                     try:

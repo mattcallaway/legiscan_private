@@ -35,6 +35,9 @@ WORKFLOWS = {
         "Federal Voting Profiles": ("Federal Voting Profiles", "Explore recorded congressional votes by member."),
         "🛠️ Staff Analytics": ("Staff Analytics", "Explore staff assignments and roster changes."),
     },
+    "Administration": {
+        "API Quota": ("API Quota", "Review LegiScan usage and adjust the shared request budget."),
+    },
 }
 DESTINATIONS = {
     view: (name, section, hint)
@@ -115,7 +118,8 @@ def render_current_bill_sync(jurisdictions, *, corpus, job_manager, username, ba
                 result = (f'{JURISDICTIONS[code]} · {outcome["session"]} · {action} '
                           f'({stats["new"]:,} new, {stats["updated"]:,} updated)')
                 if stats["errors"]:
-                    st.warning(f'{result}. Incomplete with {stats["errors"]:,} errors.')
+                    reason = stats.get("request_stop_reason") or f'Incomplete with {stats["errors"]:,} errors'
+                    st.warning(f"{result}. {reason}.")
                 else:
                     st.success(f"{result} completed.")
     if background:
@@ -257,7 +261,8 @@ def render_dashboard(*, corpus, tracked_bills, notes, topic_count, destinations,
         st.warning("Upcoming events or follow-ups are temporarily unavailable.")
 
     st.subheader("Explore the workspace")
-    for column, (heading, choices) in zip(st.columns(len(WORKFLOWS)), WORKFLOWS.items()):
+    groups = [(heading, choices) for heading, choices in WORKFLOWS.items() if any(view in destinations for view in choices)]
+    for column, (heading, choices) in zip(st.columns(len(groups)), groups):
         with column, st.container(border=True):
             st.markdown(f"#### {heading}")
             for view, (label, hint) in choices.items():

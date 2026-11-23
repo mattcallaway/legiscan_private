@@ -1,7 +1,7 @@
 from notifications import STATUS_LABELS
 from tracker_dashboard import render_current_bill_sync, render_dashboard, render_workspace_breadcrumb
 from tracker_pages import (
-    render_email_notifications, render_hearing_calendar, render_historical_coverage,
+    render_email_notifications, render_hearing_calendar, render_historical_coverage, render_legiscan_quota,
 )
 from service_terms import CALIFORNIA_SOURCE, fetch_congress_member_terms, vote_service_status
 import requests
@@ -509,7 +509,7 @@ def _show_bill_text_modal(bill_id, doc_id, bill_number, bill_url=None):
         res = corpus.get_bill_text(clean_bill_id, doc_id=clean_doc_id)
     
     if not res:
-        st.error("Could not retrieve bill text. It may not be available in HTML format yet.")
+        st.error(corpus.last_request_failure or "Could not retrieve bill text. It may not be available in HTML format yet.")
         if link := source_link(bill_url):
             st.link_button("View on LegiScan", link)
         return
@@ -543,7 +543,11 @@ def render_amendment_comparison(bill_id, prefix):
         versions_key = f"{_username}:{prefix}:versions"
         if st.button("Load text versions", key=f"{prefix}_load_versions"):
             try:
-                st.session_state[versions_key] = corpus.get_bill_versions(bill_id)
+                versions = corpus.get_bill_versions(bill_id)
+                if corpus.last_request_failure:
+                    st.warning(corpus.last_request_failure)
+                else:
+                    st.session_state[versions_key] = versions
             except (ValueError, OSError) as error:
                 st.error(f"Versions could not be loaded: {error}")
         versions = st.session_state.get(versions_key)
@@ -1062,6 +1066,10 @@ if not _auth.is_guest():
         view_modes.insert(4, "Daily Review")
 if st.session_state.get("app_mode") == "Daily Review" and "Daily Review" not in view_modes:
     st.session_state["app_mode"] = "⭐ Tracked Bills"
+if _auth.is_admin():
+    view_modes.append("API Quota")
+elif st.session_state.get("app_mode") == "API Quota":
+    st.session_state["app_mode"] = "Dashboard"
 app_mode = st.sidebar.radio("View Mode", view_modes, key="app_mode")
 
 st.sidebar.divider()
@@ -1535,17 +1543,22 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
             default=["California"], key="rescan_states"
         )
         _rescan_federal = st.checkbox("Include Federal", value=True, key="rescan_federal")
+        rescan_keywords = st.multiselect("Keywords to scan", options=keywords_list, default=keywords_list,
+                                          key="rescan_keywords")
+        search_calls = len(rescan_keywords) * (len(_rescan_states) + int(_rescan_federal))
+        st.caption(f"Up to {search_calls:,} search requests for this selection, plus any uncached bill details.")
 
         _running_jobs_for_lock = job_manager.get_running_jobs() if job_manager else []
         _lock_rescan = bool(_running_jobs_for_lock and any(_j['job_type'] == 'keyword_rescan' for _j in _running_jobs_for_lock))
-        if st.button("▶️ Run Keyword Rescan", key="run_rescan", disabled=not job_manager or (_lock_rescan and not background_sync)):
+        if st.button("▶️ Run Keyword Rescan", key="run_rescan",
+                     disabled=not job_manager or not rescan_keywords or (_lock_rescan and not background_sync)):
             if not _rescan_states and not _rescan_federal:
                 st.warning("Select at least one jurisdiction.")
             else:
                 if background_sync:
                     codes = {name: code for code, name in US_STATES.items()}
                     states = [codes[state] for state in _rescan_states] + (["US"] if _rescan_federal else [])
-                    enqueue_sync("keyword_rescan", ",".join(states), "ALL", {"states": states})
+                    enqueue_sync("keyword_rescan", ",".join(states), "ALL", {"states": states, "keywords": rescan_keywords})
                 else:
                     with st.spinner("Scanning bills by keyword…"):
                         try:
@@ -1553,10 +1566,13 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                             _api_states = [_sc2nc.get(s, s) for s in _rescan_states]
                             if _rescan_federal:
                                 _api_states.append("US")
-                            scan_stats = run_rescan_job(corpus, _api_states, DATA_DIR, job_manager, initiated_by=_username)
+                            scan_stats = run_rescan_job(corpus, _api_states, DATA_DIR, job_manager,
+                                                        initiated_by=_username, keywords=rescan_keywords)
                             sync_with_remote()
                             load_data.clear()
                             if scan_stats["api_status"] == "error":
+                                if scan_stats.get("request_stop_reason"):
+                                    st.warning(scan_stats["request_stop_reason"])
                                 st.warning(
                                     f'Rescan had {scan_stats["search_failures"]} search failures and '
                                     f'{scan_stats["detail_failures"]} bill detail failures. '
@@ -1611,7 +1627,8 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
                         else:
                             progress.empty()
                             if results["errors"]:
-                                st.warning(f'Refresh incomplete. {results["errors"]} upstream requests failed. Existing records were kept for failed updates.')
+                                reason = results.get("request_stop_reason") or f'{results["errors"]} upstream requests failed'
+                                st.warning(f"Refresh incomplete. {reason}. Existing records were kept for failed updates.")
                             else:
                                 st.success("Session refresh completed.")
 
@@ -2048,6 +2065,10 @@ elif "All Bills" in app_mode:
                         st.download_button("Download matching bills", download, "all_bills_search.csv", "text/csv")
         except Exception as error:
             st.error(f"Search could not be completed: {error}")
+
+
+elif app_mode == "API Quota" and _auth.is_admin():
+    render_legiscan_quota(DATA_DIR, API_KEY)
 
 
 elif app_mode == "Email Notifications" and not _auth.is_guest():

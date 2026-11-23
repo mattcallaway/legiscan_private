@@ -53,14 +53,16 @@ import time
 import zipfile
 from collections import OrderedDict
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from hashlib import sha256
+from pathlib import Path
 from threading import Lock, local
 from typing import Callable, Optional
 
 import requests
-from request_budget import allow_request
+from request_budget import MISSING_KEY, admit_legiscan_request, job_stop_reason, observe_legiscan_response
 from sqlite_schema import add_missing_columns, apply_ddl, migrate_schema
 from hearing_calendar import normalize_calendar, source_link
 import pandas as pd
@@ -69,7 +71,6 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 BASE_URL        = "https://api.legiscan.com/"
-_REQUEST_BUDGET_REACHED = "Per-job LegiScan request budget reached"
 
 CHAMBER_MAP = {"A": "Assembly", "S": "Senate", "H": "House"}
 
@@ -340,12 +341,15 @@ class CorpusManager:
         download_timeout: int = 180,
     ) -> None:
         self.db_path          = db_path
-        self.api_key          = api_key
+        self.api_key          = api_key.strip()
+        self.data_dir         = Path(db_path).parent
         self.rate_limit_s     = rate_limit_s
         self.download_timeout = download_timeout
         self._thread = local()
         self._literal_counts = OrderedDict()
         self._literal_counts_lock = Lock()
+        self._version_lists = OrderedDict()
+        self._version_lock = Lock()
         self._init_db()
 
     # ── Connection ────────────────────────────────────────────────────────────
@@ -410,21 +414,36 @@ class CorpusManager:
 
     # ── Low-level API helpers ─────────────────────────────────────────────────
 
+    @property
+    def last_request_failure(self):
+        return getattr(self._thread, "request_failure", None)
+
     def _api_get(self, params: dict, timeout: Optional[int] = None) -> dict:
         """Make one LegiScan API request (JSON response)."""
-        if not allow_request():
-            return {"status": "ERROR", "error": _REQUEST_BUDGET_REACHED, "request_failure": _REQUEST_BUDGET_REACHED}
+        self._thread.request_failure = None
+        operation = params["op"]
+        purpose = "Session discovery" if operation == "getSessionList" else "Bill research"
+        denial = admit_legiscan_request(self.data_dir, self.api_key, operation, purpose)
+        if denial:
+            self._thread.request_failure = denial
+            return {"status": "ERROR", "error": denial, "request_failure": denial}
         p = dict(params)
         p["key"] = self.api_key
         self._api_calls_run += 1
         try:
             r = requests.get(BASE_URL, params=p, timeout=timeout or 30)
+            if reason := observe_legiscan_response(self.data_dir, self.api_key, r):
+                self._thread.request_failure = reason
+                return {"status": "ERROR", "error": reason, "request_failure": reason}
             r.raise_for_status()
             time.sleep(self.rate_limit_s)
             payload = r.json()
             if isinstance(payload, dict):
                 # Only local diagnostics may populate this field.
                 payload.pop("request_failure", None)
+                if reason := observe_legiscan_response(self.data_dir, self.api_key, r, payload):
+                    self._thread.request_failure = reason
+                    payload["request_failure"] = reason
                 return payload
             failure = "LegiScan returned an invalid response"
         except requests.exceptions.Timeout:
@@ -440,6 +459,7 @@ class CorpusManager:
         except Exception as exc:
             failure = f"LegiScan request failed ({type(exc).__name__})"
         logger.error("LegiScan API error: %s while calling %s", failure, params.get("op", "?"))
+        self._thread.request_failure = failure
         return {"status": "ERROR", "error": failure, "request_failure": failure}
 
     def _meta_get(self, key: str) -> Optional[str]:
@@ -465,7 +485,7 @@ class CorpusManager:
         """
         data = self._api_get({"op": "getSessionList", "state": jurisdiction})
         if data.get("status") != "OK":
-            logger.warning(f"getSessionList failed for {jurisdiction}: {data}")
+            logger.warning("getSessionList failed for %s: %s", jurisdiction, data.get("request_failure", "upstream error"))
             return []
 
         sessions_raw: list[dict] = data.get("sessions", [])
@@ -521,7 +541,7 @@ class CorpusManager:
         """
         data = self._api_get({"op": "getDatasetList", "state": jurisdiction})
         if data.get("status") != "OK":
-            logger.warning(f"getDatasetList failed for {jurisdiction}: {data}")
+            logger.warning("getDatasetList failed for %s: %s", jurisdiction, data.get("request_failure", "upstream error"))
             return []
         return data.get("datasetlist", [])
 
@@ -606,7 +626,7 @@ class CorpusManager:
         self, session_id: int, access_key: str
     ) -> Optional[bytes]:
         """Download and decode the dataset ZIP. Returns raw bytes or None."""
-        if not allow_request():
+        if admit_legiscan_request(self.data_dir, self.api_key, "getDataset", "Bulk import"):
             return None
         p = {
             "op":         "getDataset",
@@ -614,14 +634,18 @@ class CorpusManager:
             "access_key": access_key,
             "key":        self.api_key,
         }
+        self._api_calls_run += 1
         try:
             r = requests.get(
                 BASE_URL, params=p, timeout=self.download_timeout, stream=True
             )
+            if observe_legiscan_response(self.data_dir, self.api_key, r):
+                return None
             r.raise_for_status()
-            self._api_calls_run += 1
             time.sleep(self.rate_limit_s)
             data = r.json()
+            if observe_legiscan_response(self.data_dir, self.api_key, r, data):
+                return None
         except Exception as exc:
             logger.error(f"getDataset download error: {type(exc).__name__}")
             return None
@@ -852,6 +876,9 @@ class CorpusManager:
         )
 
         for i, meta in enumerate(to_fetch):
+            if job_stop_reason():
+                stats["errors"] += 1
+                break
             bid = meta["bill_id"]
             detail_data = self._api_get({"op": "getBill", "id": bid})
             if detail_data.get("status") != "OK":
@@ -972,6 +999,8 @@ class CorpusManager:
 
         updates = []
         for i, meta in enumerate(to_fetch):
+            if job_stop_reason():
+                break
             bid = meta["bill_id"]
             detail_data = self._api_get({"op": "getBill", "id": bid})
             details = detail_data.get("bill")
@@ -1009,6 +1038,8 @@ class CorpusManager:
         vote_updates = []
         stats["vote_errors"] = 0
         for roll_call_id, bill_id in pending_votes.items():
+            if job_stop_reason():
+                break
             detail = self._fetch_member_votes(roll_call_id)
             if detail is None:
                 stats["vote_errors"] += 1
@@ -1139,7 +1170,7 @@ class CorpusManager:
     def calendar_refresh_candidates(self, bills, limit=25):
         if not bills:
             return []
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
         ordered = self._get_conn().execute(
             """SELECT j.value AS bill_id,
                       max(coalesce(s.fetched_at, ''), coalesce(a.checked_at, '')) AS last_checked
@@ -1155,7 +1186,7 @@ class CorpusManager:
     def refresh_tracked_calendars(self, bills, progress_cb=None):
         """Read event feeds for an explicit batch while retaining older snapshots on errors."""
         stats = {"new": 0, "updated": 0, "errors": 0, "unavailable": 0, "unchanged": 0,
-                 "deferred": 0, "failure_reasons": {}}
+                 "deferred": 0, "deferred_reason": None, "failure_reasons": {}}
         start_calls = self._api_calls_run
         connection = self._get_conn()
         for index, bill in enumerate(bills, 1):
@@ -1168,8 +1199,9 @@ class CorpusManager:
                 continue
             calls_before = self._api_calls_run
             details, failure = self._fetch_bill(int(bill_id))
-            if failure == _REQUEST_BUDGET_REACHED:
+            if failure and job_stop_reason() and self._api_calls_run == calls_before:
                 stats["deferred"] = len(bills) - index + 1
+                stats["deferred_reason"] = job_stop_reason()
                 break
             if failure:
                 stats["errors"] += 1
@@ -1209,6 +1241,16 @@ class CorpusManager:
         logger.warning("Individual votes unavailable for roll call %s", roll_call_id)
         return None
 
+    @_corpus_operation
+    def keyword_record_from_corpus(self, bill_id, change_hash, jurisdiction):
+        if not change_hash:
+            return None
+        row = self._get_conn().execute("""
+            SELECT b.*, s.session_name AS session FROM bills b LEFT JOIN sessions s USING (session_id)
+            WHERE b.bill_id=? AND b.change_hash=? AND b.jurisdiction=?
+        """, (bill_id, change_hash, jurisdiction)).fetchone()
+        return dict(row) if row else None
+
     def _process_bill_votes(self, conn, bill_detail):
         errors = 0
         bill_id = bill_detail.get("bill_id")
@@ -1221,6 +1263,9 @@ class CorpusManager:
                 "SELECT 1 FROM legislator_votes WHERE roll_call_id=? LIMIT 1", (roll_call_id,),
             ).fetchone():
                 continue
+            if job_stop_reason():
+                errors += 1
+                break
             detail = self._fetch_member_votes(roll_call_id)
             if detail is None:
                 errors += 1
@@ -1891,7 +1936,8 @@ class CorpusManager:
 
     def _fetch_bill(self, bill_id):
         if not self.api_key.strip():
-            return None, "No LegiScan API key is configured"
+            self._thread.request_failure = MISSING_KEY
+            return None, MISSING_KEY
         logger.info(f"API: get_bill(bill_id={bill_id})")
         res = self._api_get({"op": "getBill", "id": bill_id})
         if res.get("status") == "OK":
@@ -1911,13 +1957,32 @@ class CorpusManager:
             return None, "LegiScan could not find the requested bill"
         return None, "LegiScan rejected the bill request"
 
+    @_corpus_operation
     def get_bill_versions(self, bill_id: int) -> list[dict]:
-        details = self.get_bill(bill_id) or {}
+        self._thread.request_failure = None
+        revision = self._get_conn().execute(
+            "SELECT change_hash, latest_doc_id FROM bills WHERE bill_id=?", (bill_id,),
+        ).fetchone()
+        key = (bill_id, *revision) if revision else (bill_id,)
+        with self._version_lock:
+            cached = self._version_lists.get(key)
+            if cached and cached[0] > time.monotonic():
+                self._version_lists.move_to_end(key)
+                return deepcopy(cached[1])
+        details = self.get_bill(bill_id)
+        if details is None:
+            return []
         versions = {}
         for text in details.get("texts") or []:
             if isinstance(text, dict) and text.get("doc_id"):
                 versions[int(text["doc_id"])] = text
-        return sorted(versions.values(), key=lambda item: (item.get("date") or "", int(item["doc_id"])))
+        ordered = sorted(versions.values(), key=lambda item: (item.get("date") or "", int(item["doc_id"])))
+        with self._version_lock:
+            self._version_lists[key] = (time.monotonic() + 3 * 60 * 60, deepcopy(ordered))
+            self._version_lists.move_to_end(key)
+            if len(self._version_lists) > 256:
+                self._version_lists.popitem(last=False)
+        return ordered
 
     @_corpus_operation
     def get_bill_text(self, bill_id: int, doc_id: Optional[int] = None) -> Optional[dict]:
@@ -1925,6 +1990,7 @@ class CorpusManager:
         Get the full text of a bill. Uses local cache in bill_texts table if present.
         Returns a dict: { 'html': str, 'pdf_url': str, 'mime': str }
         """
+        self._thread.request_failure = None
         conn = self._get_conn()
         
         # 1. Try cache

@@ -72,6 +72,7 @@ class KeywordScannerTests(TestCase):
             snapshot.write_text("bill_id,title,status_stage\n1,Keep,1\n2,Existing,2\n", encoding="utf-8")
             matches = [{"bill_id": 1, "change_hash": "new"}, {"bill_id": 2, "change_hash": "same"}]
             corpus = Mock()
+            corpus.keyword_record_from_corpus.return_value = None
             with (
                 patch.object(legiscanner.time, "sleep"),
                 patch.object(legiscanner, "fetch_search_results", return_value=(matches, 2, 0, True)),
@@ -896,7 +897,7 @@ class HearingCalendarTests(TestCase):
             bills = [{"bill_id": "10"}, {"bill_id": "20"}, {"bill_id": "30"}]
             response = Mock()
             response.json.return_value = {
-                "status": "ERROR", "alert": {"message": "Invalid API key fixture-key"},
+                "status": "ERROR", "alert": {"message": "Invalid bill fixture-key"},
                 "request_failure": "must never be echoed",
             }
             with (patch.dict("os.environ", {"LEGISCAN_JOB_REQUEST_LIMIT": "2"}),
@@ -912,7 +913,7 @@ class HearingCalendarTests(TestCase):
             self.assertEqual(corpus.calendar_refresh_candidates({bill["bill_id"]: bill for bill in bills}), bills[2:])
             job = jobs.get_job(job_id)
             self.assertEqual(job["status"], "FAILED")
-            self.assertIn("LegiScan reported an API key problem", job["error_summary"])
+            self.assertIn("LegiScan could not find the requested bill", job["error_summary"])
             self.assertIn("LegiScan request timed out", job["error_summary"])
             self.assertIn("deferred", job["error_summary"])
             self.assertNotIn("fixture-key", job["error_summary"] + " ".join(logged.output))

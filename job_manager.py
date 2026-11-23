@@ -159,7 +159,8 @@ class JobManager:
                 return None
             job = conn.execute(
                 """SELECT * FROM system_jobs WHERE status='QUEUED' AND queue_payload IS NOT NULL
-                   ORDER BY queued_at, rowid LIMIT 1"""
+                   ORDER BY CASE WHEN job_type IN ('current_session_sync', 'incremental_refresh', 'bootstrap_corpus')
+                                 THEN 0 ELSE 1 END, queued_at, rowid LIMIT 1"""
             ).fetchone()
             if job is None:
                 return None

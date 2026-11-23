@@ -16,7 +16,7 @@ import json
 import csv
 import logging
 import requests
-from request_budget import allow_request
+from request_budget import admit_legiscan_request, job_stop_reason, observe_legiscan_response
 import time
 import argparse
 from tempfile import NamedTemporaryFile
@@ -89,15 +89,19 @@ def save_cache(cache, filepath=CACHE_FILE):
     logger.info(f"Cache written to {filepath}")
 
 
-def fetch_search_results(jurisdiction, keyword):
-    if not allow_request():
+def fetch_search_results(jurisdiction, keyword, *, data_dir=None):
+    scope = data_dir or DATA_DIR
+    if admit_legiscan_request(scope, API_KEY, "getSearchRaw", "Keyword scan"):
         return [], 0, 0, False
-    params = {"key": API_KEY, "op": "getSearchRaw", "state": jurisdiction, "query": keyword}
+    params = {"key": API_KEY.strip(), "op": "getSearchRaw", "state": jurisdiction, "query": keyword}
     logger.info(f"Searching {jurisdiction} for keyword '{keyword}'")
     try:
         r = requests.get(BASE_URL, params=params, timeout=(5, 30))
+        if observe_legiscan_response(scope, API_KEY, r):
+            return [], 0, 0, False
         r.raise_for_status()
         data = r.json()
+        observe_legiscan_response(scope, API_KEY, r, data)
     except Exception as e:
         logger.error(f"Error fetching search results for {jurisdiction}: {type(e).__name__}")
         return [], 0, 0, False
@@ -116,14 +120,18 @@ def fetch_search_results(jurisdiction, keyword):
     return filtered_results, total_found, filtered_count, True
 
 
-def get_bill_details(bill_id):
-    if not allow_request():
+def get_bill_details(bill_id, *, data_dir=None):
+    scope = data_dir or DATA_DIR
+    if admit_legiscan_request(scope, API_KEY, "getBill", "Keyword scan"):
         return None
-    params = {"key": API_KEY, "op": "getBill", "id": bill_id}
+    params = {"key": API_KEY.strip(), "op": "getBill", "id": bill_id}
     try:
         r = requests.get(BASE_URL, params=params, timeout=(5, 30))
+        if observe_legiscan_response(scope, API_KEY, r):
+            return None
         r.raise_for_status()
         data = r.json()
+        observe_legiscan_response(scope, API_KEY, r, data)
     except Exception as e:
         logger.error(f"Error fetching bill {bill_id}: {type(e).__name__}")
         return None
@@ -205,7 +213,7 @@ def load_existing_csv(filepath=CSV_FILE):
                 existing_bills[bill_id] = row
     return existing_bills
 
-def run_scan(states=None, data_dir=None, corpus_manager=None):
+def run_scan(states=None, data_dir=None, corpus_manager=None, *, selected_keywords=None):
     if not states:
         raise ValueError("Select at least one jurisdiction or explicitly request ALL.")
     invalid = set(states) - US_STATES.keys() - {ALL_ALIAS, FEDERAL_ALIAS}
@@ -219,6 +227,12 @@ def run_scan(states=None, data_dir=None, corpus_manager=None):
     os.makedirs(data_dir, exist_ok=True)
 
     keywords = load_keywords(os.path.join(data_dir, os.path.basename(KEYWORDS_FILE)))
+    if selected_keywords is not None:
+        available = {keyword.casefold(): keyword for keyword in keywords}
+        selected = [keyword.casefold() for keyword in normalize_keywords(selected_keywords)]
+        if not selected or any(keyword not in available for keyword in selected):
+            raise ValueError("Select at least one keyword from the configured shared keywords.")
+        keywords = [available[keyword] for keyword in selected]
     cache_path = os.path.join(data_dir, os.path.basename(CACHE_FILE))
     csv_path = os.path.join(data_dir, os.path.basename(CSV_FILE))
     cache = load_cache(cache_path)
@@ -237,9 +251,13 @@ def run_scan(states=None, data_dir=None, corpus_manager=None):
     }
 
     for jurisdiction in states:
+        if job_stop_reason():
+            break
         for keyword in keywords:
+            if job_stop_reason():
+                break
             stats["api_calls"] += 1
-            searches, total_f, filtered_c, api_ok = fetch_search_results(jurisdiction, keyword)
+            searches, total_f, filtered_c, api_ok = fetch_search_results(jurisdiction, keyword, data_dir=data_dir)
             if not api_ok:
                 stats["api_status"] = "error"
                 stats["search_failures"] += 1
@@ -249,20 +267,30 @@ def run_scan(states=None, data_dir=None, corpus_manager=None):
 
             time.sleep(0.2)
             for item in searches:
+                if job_stop_reason():
+                    break
                 bid      = str(item['bill_id'])
                 new_hash = item['change_hash']
                 previous = existing_bills.get(bid, {})
                 previous_keywords = previous.get("keyword", "").split(";")
                 old_hash = previous.get("change_hash") or cache.get(bid, {}).get("change_hash")
                 if bid not in existing_bills or not new_hash or new_hash != old_hash:
-                    stats["api_calls"] += 1
-                    details = get_bill_details(bid)
-                    time.sleep(0.2)
-                    if not details or str(details.get("bill_id")) != bid:
-                        stats["api_status"] = "error"
-                        stats["detail_failures"] += 1
-                        continue
-                    row = flatten_bill(details, jurisdiction, keyword)
+                    local_row = corpus_manager.keyword_record_from_corpus(bid, new_hash, jurisdiction) if corpus_manager else None
+                    if local_row:
+                        row = {
+                            **local_row, "jurisdiction_level": "Federal" if jurisdiction == FEDERAL_ALIAS else "State",
+                            "jurisdiction_name": "U.S. Congress" if jurisdiction == FEDERAL_ALIAS else US_STATES.get(jurisdiction, jurisdiction),
+                            "sponsors": local_row["sponsor_names"], "committees": local_row["committee"],
+                        }
+                    else:
+                        stats["api_calls"] += 1
+                        details = get_bill_details(bid, data_dir=data_dir)
+                        time.sleep(0.2)
+                        if not details or str(details.get("bill_id")) != bid:
+                            stats["api_status"] = "error"
+                            stats["detail_failures"] += 1
+                            continue
+                        row = flatten_bill(details, jurisdiction, keyword)
                     
                     if bid not in existing_bills:
                         stats["new_bills"] += 1
@@ -313,8 +341,15 @@ def run_scan(states=None, data_dir=None, corpus_manager=None):
 
 
 if __name__ == '__main__':
+    from request_budget import job_request_budget
+
     parser = argparse.ArgumentParser(description="Run LegiScan comprehensive tracker")
     parser.add_argument('--states', nargs='+', help='Jurisdictions to scan (e.g., CA NY TX US ALL)')
     args = parser.parse_args()
-    stats = run_scan(states=[s.upper() for s in (args.states or ["CA"])])
+    with job_request_budget("Keyword scan") as budget:
+        stats = run_scan(states=[s.upper() for s in (args.states or ["CA"])])
+    stats["api_calls"] = budget.used
+    if budget.stop_reason:
+        stats["stopped"] = budget.stop_reason
     print(f"Scan complete. Stats: {json.dumps(stats, indent=2)}")
+    raise SystemExit(stats["api_status"] == "error")

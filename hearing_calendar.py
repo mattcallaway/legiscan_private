@@ -76,7 +76,7 @@ def calendar_refresh_failure_summary(stats):
     deferred = stats["deferred"]
     if deferred:
         checks = "check" if deferred == 1 else "checks"
-        messages.append(f"{deferred:,} calendar {checks} deferred by the per-job LegiScan request limit.")
+        messages.append(f'{deferred:,} calendar {checks} deferred. {stats["deferred_reason"]}.')
     return " ".join(messages)
 
 

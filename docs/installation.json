@@ -280,7 +280,24 @@
       "use_as_private_backup": false
     }
   },
+  "legiscan_quota": {
+    "storage": "DATA_DIR/legiscan_quota.db",
+    "admin_view": "API Quota",
+    "scope": "one allowance per API credential across app, worker and CLI using the same DATA_DIR",
+    "period": "Pacific calendar month",
+    "default_monthly_requests": 10000,
+    "default_reserved_core_requests": 2000,
+    "provider_usage_reconciliation": "enter the provider's current total in the admin view",
+    "scheduled_refresh_calendar": "Mon..Fri *-*-* 07:00:00 America/Los_Angeles"
+  },
   "cli_tasks": {
+    "sync-current": {
+      "argv": ["python", "cli.py", "--task", "sync-current", "--states", "CA,US"]
+    },
+    "scheduled-refresh": {
+      "argv": ["python", "cli.py", "--task", "scheduled-refresh", "--states", "CA,US"],
+      "skips": ["Pacific weekends", "administrator pause", "sessions already refreshed today"]
+    },
     "bootstrap": {
       "argv": [
         "python",
@@ -317,7 +334,8 @@
       ],
       "default_states": [
         "CA"
-      ]
+      ],
+      "repeatable_keyword_override": ["--keyword", "{configured_shared_keyword}"]
     },
     "worker": {
       "argv": [
