@@ -23,3 +23,16 @@ Rerun with the same fixture size and 100 repetitions after the connection change
 | Historical coverage | 17.694 | 18.509 | 18.775 |
 
 The same representative indexes were selected. Opening and closing connections is additional work. Median timings increased in this run. These separate synthetic runs do not establish a production latency change. The regression suite exercises concurrent read isolation, commit visibility and rollback. It is not a concurrent throughput benchmark.
+
+## Annotation-filtered search on improved-exp
+
+The expanded synthetic fixture contains 96,000 bills across four sessions. The annotation scenario selects 32 bill IDs across the corpus and measures the All Bills page query and count together. Both runs used the same machine, Python and SQLite environment, fixture, and 30 timed repetitions. The query plan is captured from the actual page query.
+
+| Annotation page plus count | p50 ms | p95 ms | p99 ms |
+| --- | ---: | ---: | ---: |
+| Before, with bill IDs converted to text in SQL | 74.537 | 77.180 | 84.111 |
+| After, with canonical integer IDs supplied to SQL | 9.525 | 11.021 | 12.337 |
+
+SQLite moved from a bills index scan to integer primary-key lookups. The annotation filter continues to match only IDs that had an exact canonical text representation. No schema change or reindex is required. These timings are local Python query timings and do not include the hosted UI. The literal search and historical coverage paths were outside this optimization. In the after run they measured 271.471 ms and 196.085 ms at p50 respectively, making them candidates for separate benchmarks and optimizations.
+
+Reproduce the comparison with the annotation scenario in the harness: python tools/benchmark_corpus.py --rows 96000 --repetitions 30.

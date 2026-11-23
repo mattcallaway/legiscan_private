@@ -289,6 +289,18 @@ CREATE TABLE IF NOT EXISTS people_mapping (
 
 
 # ── CorpusManager ──────────────────────────────────────────────────────────────
+def _canonical_bill_ids(values):
+    """Convert only exact representations of SQLite integer bill IDs."""
+    for value in values:
+        text = str(value)
+        digits = text.removeprefix("-")
+        if len(text) > 20 or not digits.isascii() or not digits.isdecimal():
+            continue
+        number = int(text)
+        if -(2 ** 63) <= number < 2 ** 63 and str(number) == text:
+            yield number
+
+
 def _corpus_operation(method):
     @wraps(method)
     def run(self, *args, **kwargs):
@@ -1257,11 +1269,11 @@ class CorpusManager:
             conditions.append("b.committee IN (SELECT value FROM json_each(?))")
             params.append(json.dumps(list(committees)))
         if bill_ids is not None:
-            conditions.append("CAST(b.bill_id AS TEXT) IN (SELECT value FROM json_each(?))")
-            params.append(json.dumps(list(map(str, bill_ids))))
+            conditions.append("b.bill_id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(_canonical_bill_ids(bill_ids))))
         if excluded_bill_ids:
-            conditions.append("CAST(b.bill_id AS TEXT) NOT IN (SELECT value FROM json_each(?))")
-            params.append(json.dumps(list(map(str, excluded_bill_ids))))
+            conditions.append("b.bill_id NOT IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(_canonical_bill_ids(excluded_bill_ids))))
 
         def topic_clause(term):
             params.extend([term.casefold()] * 3)

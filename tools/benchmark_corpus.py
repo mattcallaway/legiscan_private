@@ -62,11 +62,21 @@ def run(count, repetitions):
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                     fixture_rows(count),
                 )
+            # A saved annotation filter selects a small set from the full corpus.
+            selected_ids = [str(index) for index in range(1, count + 1, max(1, count // 32))]
+
+            def annotation_page():
+                return corpus.search_bills(bill_ids=selected_ids, limit=50)
+
             operations = {
                 "session_page": lambda: corpus.search_bills(session_id=1, limit=50),
                 "literal_page_and_count": lambda: (
                     corpus.search_bills(query="Water supply", session_id=1, limit=50),
                     corpus.search_bills(query="Water supply", session_id=1, count_only=True),
+                ),
+                "annotation_page_and_count": lambda: (
+                    annotation_page(),
+                    corpus.search_bills(bill_ids=selected_ids, count_only=True),
                 ),
                 "historical_coverage": corpus.get_historical_coverage,
             }
@@ -77,6 +87,14 @@ def run(count, repetitions):
             }.items():
                 with corpus.connection() as connection:
                     plans[name] = [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}")]
+            with corpus.connection() as connection:
+                statements = []
+                connection.set_trace_callback(statements.append)
+                annotation_page()
+                connection.set_trace_callback(None)
+                plans["annotation_page"] = [
+                    row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + statements[-1])
+                ]
             return {
                 "platform": platform.platform(),
                 "python": platform.python_version(),

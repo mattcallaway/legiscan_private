@@ -1300,3 +1300,28 @@ class StaffAndJobMigrationTests(TestCase):
                 self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 0)
                 self.assertIsNone(conn.execute("SELECT 1 FROM sqlite_master WHERE name='unfinished'").fetchone())
             self.assertEqual(StaffManager(str(path)).get_roster_snapshots(), [])
+
+
+class AnnotationSearchTests(TestCase):
+    def test_annotation_id_scope_matches_only_canonical_ids_for_count_and_page(self):
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory) / "bills.db"), "")
+            with corpus.connection() as conn, conn:
+                conn.executemany(
+                    "INSERT INTO bills (bill_id, title, status_date) VALUES (?, ?, ?)",
+                    [
+                        (0, "Zero", "2025-01-02"),
+                        (-4, "Negative", "2025-01-03"),
+                        (12, "Twelve", "2025-01-04"),
+                        (25, "Twenty-five", "2025-01-05"),
+                        (2 ** 63 - 1, "Maximum", "2025-01-06"),
+                    ],
+                )
+            selected = ["0", -4, "12", 2 ** 63 - 1, "+25", "025", " 25 ", 25.0,
+                        None, True, "25x", "25 ", "25e0", "9223372036854775808"]
+            excluded = ["-04", 12, "00", None, 25]
+            results = corpus.search_bills(bill_ids=selected, excluded_bill_ids=excluded)
+            self.assertEqual(results["bill_id"].tolist(), [2 ** 63 - 1, -4, 0])
+            self.assertEqual(corpus.search_bills(bill_ids=selected, excluded_bill_ids=excluded, count_only=True), 3)
+            self.assertTrue(corpus.search_bills(bill_ids=[]).empty)
+            self.assertEqual(corpus.search_bills(excluded_bill_ids=["012", 2 ** 63], count_only=True), 5)
