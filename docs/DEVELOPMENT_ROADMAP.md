@@ -18,4 +18,4 @@ See [audit findings](AUDIT_FINDINGS.md), [test matrix](TEST_MATRIX.md), [baselin
 
 ## Experimental branch
 
-Development and subsequent follow-up commits from the master brief are now staged on improved-exp. The improved branch remains the pre-experiment release line. The first persistence change isolates CorpusManager connections and API accounting across concurrent threads. Production cutover, staff storage review, explicit versioned migrations, and measured concurrent throughput remain open.
+Development and subsequent follow-up commits from the master brief are now staged on improved-exp. The improved branch remains the pre-experiment release line. The first persistence change isolates CorpusManager connections and API accounting across concurrent threads. Production cutover, staff storage review, additional versioned migrations, and measured concurrent throughput remain open. The corpus now has a transactional adoption migration and rejects unsupported newer schemas.

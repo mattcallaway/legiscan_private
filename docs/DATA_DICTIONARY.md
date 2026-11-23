@@ -18,3 +18,5 @@ For table-to-code relationships see [technical map](TECHMAP.md). This dictionary
 Migration rules use stable IDs, preserve nullable/unknown records and do not infer absent source evidence. Preserve pre-change backups, validate older fixtures, and document compatibility for every structural change. Phase 1 uses a separate SQLite lock file beside the JSON account store. It carries no account records. Stop all old-version account writers during an upgrade because those processes do not acquire the new lock.
 
 The local login attempt database next to the account store contains temporary counters keyed by a digest of the normalized known account name, plus a shared unknown-account bucket. It contains no passwords and does not determine account permissions.
+
+SQLite user_version 0 represents an unversioned bill corpus, including installations whose sync_meta schema_version text is already 1. Version 1 records completion of the baseline corpus schema transaction. A normal restart reads the version and skips schema setup. This version applies only to bills.db. Staff, job, workspace, and PostgreSQL schemas retain their existing conventions.

@@ -24,4 +24,8 @@ This audit checkpoint is ready for continued local development. It does not cert
 
 ## Experimental branch checkpoint
 
-The local improved-exp corpus connection change passed 45 regression tests including isolated PostgreSQL with simulated delivery, and the browser smoke test passed. The synthetic benchmark recorded the connection lifecycle cost. There is no new explicit data migration for the change. GitHub Actions and production deployment are separate checks.
+The corpus connection change passed 45 local tests, including isolated PostgreSQL with simulated delivery. The browser smoke test also passed. Both GitHub jobs succeeded on [edf613c](https://github.com/mattcallaway/legiscan_private/actions/runs/45149277180). The synthetic benchmark recorded the connection lifecycle cost. There is no new explicit data migration for the change. GitHub Actions and production deployment are separate checks.
+
+## Corpus migration checkpoint
+
+Tests cover a pre-document-column fixture with historical session timestamps and individual votes, a pre-upgrade backup, four concurrent fresh starts, rollback after an interrupted migration, safe restart, and refusal of an unknown newer version. All 49 local regressions passed with isolated PostgreSQL, and the browser smoke test passed. The versioned corpus migration has not been run against live VPS data.

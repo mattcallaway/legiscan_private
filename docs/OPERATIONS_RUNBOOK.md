@@ -20,3 +20,7 @@ The audited VPS had a healthy `221f279` checkout and the legacy staff cron tempo
 ## Phase 1 compatibility
 
 Stop old writers before switching releases to activate cross-process serialization. The service account needs write access to the account directory for the lock file and atomic replacement. Account JSON shape, existing hashes, and notification preferences are preserved. New notification address submissions accept ASCII mailbox syntax and ASCII IDN domains in punycode, with carriage returns and line feeds rejected before normalization. Original bill documents remain linked for formatting and metadata omitted by the safe interactive reader.
+
+## Bill corpus schema version
+
+The first app or worker start with this release upgrades a fresh or legacy unversioned bills.db to SQLite user_version 1. Take a private backup of DATA_DIR before upgrading and stop old writers during cutover. The upgrade creates missing baseline tables and indexes, adds the existing document reference columns when absent, and records the version in the same transaction as those changes. The historical sync_meta marker is preserved for old code. Conversion can set WAL mode before the schema transaction. A failed schema change rolls back its DDL and records no completed version. A higher version is refused without changes. Do not edit SQLite's schema version by hand. After upgrade, check Historical Coverage and confirm a known session's vote and text counts.

@@ -1019,3 +1019,107 @@ class CorpusConnectionIsolationTests(TestCase):
                     connection.execute("INSERT INTO bills (bill_id) VALUES (123)")
                     raise ValueError("fixture failure")
             self.assertEqual(corpus.search_bills(count_only=True), 0)
+
+
+class CorpusMigrationTests(TestCase):
+    def test_legacy_upgrade_keeps_bill_votes_and_refresh_history_and_only_runs_once(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "bills.db"
+            backup = Path(directory) / "bills-backup.db"
+            with closing(sqlite3.connect(path)) as legacy:
+                legacy.executescript("""
+                    CREATE TABLE sync_meta (key TEXT PRIMARY KEY, value TEXT);
+                    INSERT INTO sync_meta VALUES ('schema_version', '1');
+                    INSERT INTO sync_meta VALUES ('last_incremental_CA', '2025-04-05');
+                    CREATE TABLE sessions (
+                        session_id INTEGER PRIMARY KEY, jurisdiction TEXT NOT NULL, session_name TEXT,
+                        year_start INTEGER, year_end INTEGER, is_active INTEGER, dataset_hash TEXT,
+                        last_masterlist TEXT, last_bootstrap TEXT
+                    );
+                    INSERT INTO sessions VALUES (9, 'CA', 'Legacy session', 2025, 2026, 0, 'hash',
+                                                 '2025-04-05', '2025-01-17');
+                    CREATE TABLE bills (
+                        bill_id INTEGER PRIMARY KEY, session_id INTEGER REFERENCES sessions(session_id),
+                        jurisdiction TEXT, bill_number TEXT, title TEXT, status_stage TEXT, status_date TEXT,
+                        last_action_date TEXT
+                    );
+                    INSERT INTO bills VALUES (40, 9, 'CA', 'AB 40', 'Legacy bill', '2', '2025-04-05', '2025-04-05');
+                    CREATE TABLE roll_calls (roll_call_id INTEGER PRIMARY KEY, bill_id INTEGER REFERENCES bills(bill_id));
+                    INSERT INTO roll_calls VALUES (50, 40);
+                    CREATE TABLE legislator_votes (
+                        roll_call_id INTEGER REFERENCES roll_calls(roll_call_id), people_id INTEGER,
+                        vote_id INTEGER, vote_text TEXT, PRIMARY KEY (roll_call_id, people_id)
+                    );
+                    INSERT INTO legislator_votes VALUES (50, 70, 1, 'Yea');
+                """)
+                with closing(sqlite3.connect(backup)) as target:
+                    legacy.backup(target)
+
+            corpus = CorpusManager(str(path), "")
+            coverage = corpus.get_historical_coverage().iloc[0]
+            self.assertEqual(coverage["last_bootstrap"], "2025-01-17")
+            self.assertEqual(coverage["last_masterlist"], "2025-04-05")
+            self.assertEqual((coverage["bills"], coverage["with_individual_votes"]), (1, 1))
+            with corpus.connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+                bill = conn.execute("SELECT title, latest_doc_id, latest_doc_url FROM bills").fetchone()
+                self.assertEqual(tuple(bill), ("Legacy bill", None, None))
+                self.assertEqual(tuple(conn.execute("SELECT * FROM legislator_votes").fetchone()), (50, 70, 1, "Yea"))
+                self.assertEqual(conn.execute("SELECT value FROM sync_meta WHERE key='last_incremental_CA'").fetchone()[0],
+                                 "2025-04-05")
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
+            with patch.object(CorpusManager, "_migrate_schema_v1", side_effect=AssertionError("already migrated")):
+                self.assertEqual(CorpusManager(str(path), "").get_historical_coverage().iloc[0]["bills"], 1)
+            with closing(sqlite3.connect(backup)) as original:
+                self.assertEqual(original.execute("PRAGMA user_version").fetchone()[0], 0)
+                self.assertEqual(original.execute("SELECT title FROM bills").fetchone()[0], "Legacy bill")
+
+    def test_parallel_fresh_starts_all_see_the_finished_schema(self):
+        from threading import Barrier
+
+        with TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=4) as pool:
+            path = str(Path(directory) / "bills.db")
+            gate = Barrier(4)
+
+            def initialize(_):
+                gate.wait(timeout=10)
+                manager = CorpusManager(path, "")
+                with manager.connection() as conn:
+                    version = conn.execute("PRAGMA user_version").fetchone()[0]
+                    journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                return manager.search_bills(count_only=True), version, journal
+
+            self.assertEqual(list(pool.map(initialize, range(4))), [(0, 1, "wal")] * 4)
+
+    def test_failed_migration_rolls_back_data_ddl_and_version(self):
+        def fail(conn):
+            conn.execute("CREATE TABLE unfinished (value TEXT)")
+            conn.execute("UPDATE original SET value='changed'")
+            raise sqlite3.OperationalError("fixture failure")
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "bills.db"
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.execute("CREATE TABLE original (value TEXT)")
+                conn.execute("INSERT INTO original VALUES ('kept')")
+            with patch.object(CorpusManager, "_migrate_schema_v1", side_effect=fail):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "fixture failure"):
+                    CorpusManager(str(path), "")
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 0)
+                self.assertEqual(conn.execute("SELECT value FROM original").fetchone()[0], "kept")
+                self.assertIsNone(conn.execute("SELECT name FROM sqlite_master WHERE name='unfinished'").fetchone())
+            self.assertEqual(CorpusManager(str(path), "").search_bills(count_only=True), 0)
+
+    def test_refuses_newer_versions_without_writes(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "bills.db"
+            with closing(sqlite3.connect(path)) as conn:
+                conn.execute("PRAGMA user_version = 2")
+            with self.assertRaisesRegex(ValueError, "Unsupported corpus schema version 2"):
+                CorpusManager(str(path), "")
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+                self.assertEqual(conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0], 0)

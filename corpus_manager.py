@@ -65,7 +65,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = 1
 BASE_URL        = "https://api.legiscan.com/"
 
 CHAMBER_MAP = {"A": "Assembly", "S": "Senate", "H": "House"}
@@ -157,7 +157,7 @@ def _flatten_bill_to_row(details: dict, jurisdiction: str, session_id: int) -> d
 
 
 # ── DDL ────────────────────────────────────────────────────────────────────────
-_DDL = """
+_SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS sync_meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -352,24 +352,54 @@ class CorpusManager:
     @_corpus_operation
     def _init_db(self) -> None:
         conn = self._get_conn()
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript("BEGIN IMMEDIATE;\n" + _DDL)
+        version = self._schema_version(conn)
+        if version == SCHEMA_VERSION:
+            return
 
-        # Migration: add columns if they don't exist in bills table
-        cur = conn.cursor()
-        cur.execute("PRAGMA table_info(bills)")
-        cols = [c[1] for c in cur.fetchall()]
-        if "latest_doc_id" not in cols:
+        self._enable_wal(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        with conn:
+            # Another process may have finished while this connection waited to write.
+            if self._schema_version(conn) == 0:
+                self._migrate_schema_v1(conn)
+                conn.execute("PRAGMA user_version = 1")
+        logger.info("Corpus schema ready, version %s", SCHEMA_VERSION)
+
+    @staticmethod
+    def _enable_wal(conn):
+        # Switching journal modes can report BUSY without using SQLite's busy timeout.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL").fetchone()
+                return
+            except sqlite3.OperationalError as error:
+                code = getattr(error, "sqlite_errorcode", 0) & 255
+                if code != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+
+    @staticmethod
+    def _schema_version(conn):
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (0, SCHEMA_VERSION):
+            raise ValueError(f"Unsupported corpus schema version {version}. This release supports 0 and {SCHEMA_VERSION}.")
+        return version
+
+    @staticmethod
+    def _migrate_schema_v1(conn):
+        # These fixed statements contain no embedded semicolons. Execute each within
+        # the caller's transaction instead of using executescript's implicit commit.
+        for statement in _SCHEMA_V1.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(bills)")}
+        if "latest_doc_id" not in columns:
             conn.execute("ALTER TABLE bills ADD COLUMN latest_doc_id INTEGER")
-        if "latest_doc_url" not in cols:
+        if "latest_doc_url" not in columns:
             conn.execute("ALTER TABLE bills ADD COLUMN latest_doc_url TEXT")
-
-        conn.execute(
-            "INSERT OR IGNORE INTO sync_meta (key, value) VALUES (?, ?)",
-            ("schema_version", SCHEMA_VERSION),
-        )
-        conn.commit()
-        logger.info(f"CorpusManager ready — db={self.db_path}")
+        # Old releases look for this text value in sync_meta.
+        conn.execute("INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('schema_version', '1')")
 
     # ── Low-level API helpers ─────────────────────────────────────────────────
 
