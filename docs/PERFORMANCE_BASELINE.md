@@ -51,3 +51,15 @@ The cache holds at most 128 aggregate counts for 60 seconds per corpus manager. 
 A discarded SQLite trigram experiment cut the selective phrase median from 257.6 ms to 86.1 ms but raised the common term median from 62.9 ms to 273.9 ms. Database footprint grew from 28.3 MB to 71.5 MB and synthetic seeding rose from 3.3 to 30.0 seconds. That index was not shipped. [SQLite FTS5 trigram documentation](https://www.sqlite.org/fts5.html#the_trigram_tokenizer)
 
 Reproduce the count results with python tools/benchmark_corpus.py --rows 96000 --repetitions 25.
+
+## Cold search page and count prototype
+
+A disposable SQLite experiment used the 96,000-bill fixture, a 50-row page, a session scope, and 20 timings per scenario. Each baseline sample cleared the count cache. The combined query materialized matching bill IDs and status dates once, counted them, then loaded display fields for the selected page. The prototype returned the same rows, order, and count on all three cases.
+
+| Scenario | Separate queries p50 / p95 | Combined query p50 / p95 |
+| --- | ---: | ---: |
+| Selective phrase, 2,666 matches | 260.1 / 266.9 ms | 87.6 / 100.6 ms |
+| Common term, 24,000 matches | 63.6 / 91.5 ms | 77.9 / 79.9 ms |
+| Zero matches | 317.2 / 328.9 ms | 94.4 / 136.8 ms |
+
+The prototype suggests a faster cold path for selective and empty searches. The common-term median regressed, and the existing count cache already speeds up repeat searches. The next implementation should account for both paths and verify pagination, count consistency, and cold and warm latency separately before switching the UI.
