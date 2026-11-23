@@ -168,3 +168,5 @@ To inspect call sites programmatically, load `docs/techmap.json`, then find file
 ## Civic tag suggestions
 
 The bill detail renderer passes title, description, and subjects to civic_tags.py. It matches boundary-aware phrases from civic_topics.json and displays the associated label and source field. Personal notes and shared keyword data are independent. tools/suggest_civic_terms.py scans an existing SQLite corpus in read-only mode for recurring candidate phrases within a single jurisdiction and optional session. The output is advisory and has no write path.
+
+Successful corpus jobs rebuild the derived civic_tags.db through civic_index.py. The rebuild reads one corpus snapshot, learns at most 32 qualifying phrases, and replaces the derived assignments in one transaction. The shared Civic Tags view reads that index. Topic Inbox continues to store per-user phrase rules in the existing workspace. Its personal tagging and Daily Review toggles are independent. Changed matching rules reset that topic's seen IDs so historical matches can be reviewed again.

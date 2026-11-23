@@ -345,6 +345,15 @@
         "notifications"
       ],
       "phase": "regularly and after corpus refreshes"
+    },
+    "civic-tags": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "civic-tags"
+      ],
+      "phase": "first backfill or after dictionary changes"
     }
   },
   "operator_workflows": {

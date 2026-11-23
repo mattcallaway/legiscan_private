@@ -33,7 +33,15 @@ Example. Build a housing portfolio by creating a private topic with phrases like
 
 ### Suggested civic topics
 
-Bill details automatically show suggested civic topics based on the indexed title, summary, and subjects. Expand the details to see the phrase and source field behind each suggestion. The suggestions use a small shared civic dictionary and leave personal topics, saved searches, and shared keyword matches unchanged. A mention is evidence for a suggested label. It does not establish that the bill changes policy in that area.
+Bill details automatically show suggested civic topics based on the indexed title, summary, and subjects. Expand the details to see the phrase and source field behind each suggestion. The suggestions use a small shared civic dictionary and phrases learned from the corpus. Browse indexed labels in **Civic Tags**. A mention is evidence for a suggested label. It does not establish that the bill changes policy in that area.
+
+In **Topic Inbox**, choose **Tag matching bills**, **Track matches in Daily Review**, or both. Personal tags apply to matching records in your workspace, including historical bills. Editing the phrase rules reopens existing matches for review. An individual note's **My topics** remains available for labels you apply by hand.
+
+Successful corpus imports and refreshes rebuild a small derived civic index for California and federal bills. The rebuild can promote a phrase if it appears in the title or subjects of at least three bills, has a civic vocabulary anchor, and is not widespread boilerplate or already covered by the dictionary. The automatic vocabulary is capped at 32 learned phrases. Every rebuild revisits previously indexed bills, including bills that already had tags. To run the first backfill or refresh the index after editing the dictionary, run:
+
+    python cli.py --task civic-tags
+
+This runs locally on the existing bill corpus and stores only learned labels, tagged bill IDs, and match evidence in the derived civic index.
 
 The dictionary lives in [civic_topics.json](civic_topics.json). It uses specific phrases for subjects such as drinking water, tenant protection, and voter registration. Common words and legislative boilerplate are filtered when finding possible new phrases. After changing the dictionary, restart the app to load the new rules.
 
@@ -256,6 +264,7 @@ Use the installed environment's Python from the checkout. Substitute the numeric
 | `python cli.py --task rescan --states CA,US` | Refresh the shared keyword snapshot. The default is CA when omitted. |
 | `python cli.py --task worker` | Run the queue worker continuously. |
 | `python cli.py --task worker --once` | Attempt at most one queued job and exit. |
+| `python cli.py --task civic-tags` | Rebuild shared civic tags from indexed California and federal bills. |
 | `python cli.py --task notification-setup` | Initialize PostgreSQL notification tables. |
 | `python cli.py --task notifications` | Observe statuses and attempt eligible email delivery once. |
 

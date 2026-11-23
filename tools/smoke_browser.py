@@ -136,6 +136,26 @@ def main():
                     expect(admin_page.get_by_text("0 matching bills", exact=False)).to_be_visible(timeout=15_000)
                     expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
                     print("Browser smoke passed: search results, pagination, page clamping and empty results.")
+                    admin_page.get_by_text("Topic Inbox", exact=True).click()
+                    expect(admin_page.get_by_role("heading", name="Topic Inbox")).to_be_visible()
+                    admin_page.get_by_role("textbox", name="Topic name", exact=True).fill("My hearing portfolio")
+                    admin_page.get_by_role("textbox", name="Search terms", exact=True).fill("unique hearing")
+                    admin_page.get_by_role("button", name="Save topic", exact=True).click()
+                    expect(admin_page.get_by_text("My matching tags", exact=True)).to_be_visible(timeout=15_000)
+                    expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
+                    print("Browser smoke passed: private topic created and shown as a tag on an indexed bill.")
+                    subprocess.run(
+                        [executable, "-B", "-c",
+                         "from civic_index import rebuild_civic_index; import sys; rebuild_civic_index(sys.argv[1])",
+                         str(base / "data" / "bills.db")],
+                        cwd=ROOT, env=env, check=True,
+                    )
+                    admin_page.get_by_text("Civic Tags", exact=True).click()
+                    expect(admin_page.get_by_role("heading", name="Civic Tags")).to_be_visible()
+                    expect(admin_page.get_by_text("Last indexed", exact=False)).to_be_visible()
+                    expect(admin_page.get_by_text("Tag results page", exact=True)).to_be_visible()
+                    expect(admin_page.get_by_text("Suggested civic topics: Water", exact=True).first).to_be_visible()
+                    print("Browser smoke passed: the shared civic index can be browsed.")
                     browser.close()
             except Exception:
                 log.seek(0)

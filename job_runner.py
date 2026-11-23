@@ -1,4 +1,8 @@
 import logging
+import sqlite3
+from pathlib import Path
+
+from civic_index import rebuild_civic_index
 from threading import Event, Thread
 from typing import Optional, Callable
 from job_manager import JobConflict, JobManager
@@ -6,6 +10,20 @@ from legiscanner import run_scan
 from request_budget import job_request_budget
 
 logger = logging.getLogger(__name__)
+
+def _refresh_civic_tags(corpus, stats, progress_cb):
+    path = getattr(corpus, "db_path", None)
+    if stats["errors"] or not isinstance(path, (str, Path)):
+        return
+    path = Path(path)
+    try:
+        if progress_cb:
+            progress_cb(0.95, "Indexing civic tags and historical matches...")
+        stats["civic_index"] = rebuild_civic_index(path)
+    except (OSError, ValueError, sqlite3.Error) as error:
+        stats["civic_index_error"] = type(error).__name__
+        logger.warning("Civic tag index refresh failed: %s. Run cli.py --task civic-tags to retry.", type(error).__name__)
+
 
 def run_bootstrap_job(corpus, session_id: int, jurisdiction: str, job_manager: JobManager, progress_cb: Optional[Callable] = None, *, allow_individual_fallback: bool = True, job_id=None) -> dict:
     job_id = job_id or job_manager.start_job("bootstrap_corpus", jurisdiction, str(session_id))
@@ -19,6 +37,7 @@ def run_bootstrap_job(corpus, session_id: int, jurisdiction: str, job_manager: J
         if budget.limit is not None:
             stats["api_calls"] = budget.used
         stats["budget_exhausted"] = budget.exhausted
+        _refresh_civic_tags(corpus, stats, progress_cb)
 
         job_manager.finish_job(
             job_id,
@@ -44,6 +63,7 @@ def run_refresh_job(corpus, session_id: int, jurisdiction: str, job_manager: Job
         if budget.limit is not None:
             stats["api_calls"] = budget.used
         stats["budget_exhausted"] = budget.exhausted
+        _refresh_civic_tags(corpus, stats, progress_cb)
         
         failures = stats["errors"]
         job_manager.finish_job(

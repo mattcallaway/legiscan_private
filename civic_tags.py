@@ -70,19 +70,21 @@ def _windows(words, minimum, maximum):
             yield words[start:start + count]
 
 
-def suggest_civic_topics(bill, *, limit=5):
+def suggest_civic_topics(bill, *, learned=(), limit=5):
     """Return topic labels and exact field evidence without editing a workspace."""
     rules = load_civic_rules()
+    aliases = {phrase: (phrase.capitalize(),) for phrase in learned}
+    aliases.update(rules.topics_by_phrase)
     evidence = defaultdict(list)
     scores = Counter()
     for field, field_label in TOPIC_SEARCH_FIELDS.items():
         phrases = {
             " ".join(window)
             for words in _words(bill.get(field), rules)
-            for window in _windows(words, 1, rules.max_words)
+            for window in _windows(words, 1, max(rules.max_words, 3))
         }
-        for phrase in sorted(phrases & rules.topics_by_phrase.keys()):
-            for topic in rules.topics_by_phrase[phrase]:
+        for phrase in sorted(phrases & aliases.keys()):
+            for topic in aliases[phrase]:
                 evidence[topic].append({"phrase": phrase, "field": field_label})
                 scores[topic] += _FIELD_WEIGHTS[field]
 

@@ -209,3 +209,18 @@ def topic_match_reason(bill, topic):
         return ""
     positive = dict.fromkeys([*required_terms, *any_terms])
     return " | ".join(f'{phrase} ({", ".join(found)})' for phrase in positive if (found := hits(phrase)))
+
+
+def personal_topic_tags(bill, topics):
+    """Match private rules against current bill metadata, regardless of review state."""
+    return [
+        topic["name"] for topic in topics.values()
+        if topic.get("auto_tag") and topic_match_reason(bill, topic)
+    ]
+
+
+def update_personal_topic(entry, rules, *, auto_tag, track_matches):
+    """Revisit previous bills once when the phrase rules have changed."""
+    if any(entry.get(key, []) != value for key, value in rules.items()):
+        entry["seen"] = []
+    entry.update(rules, auto_tag=auto_tag, track_matches=track_matches)

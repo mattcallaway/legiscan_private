@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import sqlite3
 import sys
 import time
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Headless Task Runner for Legiscan Updater")
-    parser.add_argument("--task", type=str, required=True, choices=["bootstrap", "refresh", "rescan", "worker", "notification-setup", "notifications"], help="The pipeline job to execute")
+    parser.add_argument("--task", type=str, required=True, choices=["bootstrap", "refresh", "rescan", "worker", "notification-setup", "notifications", "civic-tags"], help="The pipeline job to execute")
     parser.add_argument("--session-id", type=int, help="Target session ID for bootstrap/refresh")
     parser.add_argument("--jurisdiction", type=str, help="Target jurisdiction code for bootstrap/refresh (e.g. CA, US)")
     parser.add_argument("--states", type=str, help="Comma-separated state codes for rescan (e.g., CA,NY,US)")
@@ -25,6 +26,19 @@ def main():
     
     if args.task == "worker" and (not DATA_DIR or not API_KEY):
         parser.error("The worker requires DATA_DIR and a server API_KEY.")
+
+    if args.task == "civic-tags":
+        from civic_index import rebuild_civic_index
+
+        if not DATA_DIR:
+            parser.error("Civic tag indexing requires the persistent DATA_DIR.")
+        try:
+            summary = rebuild_civic_index(os.path.join(DATA_DIR, "bills.db"))
+        except (OSError, ValueError, sqlite3.Error) as error:
+            logger.error("Civic tag indexing failed: %s", type(error).__name__)
+            return 1
+        logger.info("Civic tags: %(bills_scanned)s scanned, %(bills_tagged)s tagged, %(new_tags)s new tags.", summary)
+        return 0
 
     if args.task in {"notification-setup", "notifications"}:
         from notifications import Notifications

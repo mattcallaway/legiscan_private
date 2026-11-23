@@ -24,9 +24,10 @@ from bill_workspace import export_workspace, read_workspace, reattach_profile_no
 from html import escape
 from bill_research import (
     amendment_diff, bill_revision, build_review_queue, changed_fields, parse_topic_rules,
-    readable_bill_markup, topic_match_reason,
+    personal_topic_tags, readable_bill_markup, topic_match_reason, update_personal_topic,
 )
 from civic_tags import suggest_civic_topics
+from civic_index import civic_index_summary, indexed_civic_bills, learned_civic_phrases
 from hearing_calendar import source_link
 
 from job_manager import JobManager
@@ -600,7 +601,8 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
     kw_raw      = str(row.get('keyword', '') or '')
     kw_tags     = [t.strip() for t in kw_raw.replace(';', ',').split(',') if t.strip()]
     disp_bill_number = row.get('bill_number', bill_id)
-    civic_topics = suggest_civic_topics(row)
+    civic_topics = suggest_civic_topics(row, learned=shared_civic_phrases)
+    my_tags = personal_topic_tags(row, private_topic_rules)
     
     with st.container(border=True):
         c1, c2 = st.columns([5, 1])
@@ -640,6 +642,9 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
             if civic_topics:
                 labels = ", ".join(item["topic"] for item in civic_topics)
                 st.caption(f"Suggested civic topics: {labels}")
+            if my_tags:
+                st.caption("My matching tags")
+                st.text(", ".join(my_tags))
 
             sponsors = str(row.get('sponsors', row.get('sponsor_names', '—')))
             if sponsors != '—' and sponsors.strip():
@@ -666,13 +671,14 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                         st.toast(f"Untracked {disp_bill_number}")
                         st.rerun()
 
-            if row.get('url'):
-                st.link_button("📄 LegiScan", row['url'], use_container_width=True)
+            bill_url = source_link(row.get("url"))
+            if bill_url:
+                st.link_button("📄 LegiScan", bill_url, use_container_width=True)
             
             # 📖 In-app Text Reader
             doc_id = row.get("latest_doc_id")
             if st.button("📖 Open Text", key=f"{key_prefix}_text", use_container_width=True):
-                _show_bill_text_modal(bill_id, doc_id, disp_bill_number, bill_url=row.get('url'))
+                _show_bill_text_modal(bill_id, doc_id, disp_bill_number, bill_url=bill_url)
 
         with st.expander("📝 View Details & Edit Notes"):
             info1, info2 = st.columns(2)
@@ -924,6 +930,11 @@ try:
         revision = None
     df = load_data(revision)
     saved_views   = load_saved_views()
+    private_topic_rules = load_bill_workspace(TOPICS_FILE, {})
+    try:
+        shared_civic_phrases = learned_civic_phrases(DATA_DIR)
+    except sqlite3.Error:
+        shared_civic_phrases = ()
 except Exception as e:
     st.error(f"Critical error loading application data: {e}")
     st.stop()
@@ -1002,7 +1013,7 @@ global_search = st.sidebar.text_input(
 st.session_state.global_search = global_search
 
 view_modes = ["Dashboard", "🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "Topic Inbox",
-              "Hearing Calendar", "Historical Coverage", "👔 Legislator Directory", "Federal Voting Profiles", "🛠️ Staff Analytics"]
+              "Hearing Calendar", "Historical Coverage", "👔 Legislator Directory", "Federal Voting Profiles", "🛠️ Staff Analytics", "Civic Tags"]
 queue_preferences = {}
 if not _auth.is_guest():
     view_modes.append("Email Notifications")
@@ -2068,7 +2079,7 @@ elif app_mode == "Daily Review":
     tracked = get_tracked_bills_df(tracked_bills, corpus, df)
     by_topic = [
         (key, topic, find_topic_matches(topic, corpus, df, topic["seen"]).to_dict("records"))
-        for key, topic in topics.items()
+        for key, topic in topics.items() if topic.get("track_matches", True)
     ]
     today = date.today()
     schedules = corpus.get_bill_calendars(tracked_bills) if corpus else {}
@@ -2125,23 +2136,52 @@ elif app_mode == "Daily Review":
                               bill_notes, tracked_bills, key_prefix=f"daily_{bill_id}")
 
 
+elif app_mode == "Civic Tags":
+    st.subheader("Civic Tags")
+    try:
+        summary = civic_index_summary(DATA_DIR)
+        available = summary["counts"]
+        if summary["last_indexed"]:
+            st.caption(f'Last indexed {summary["last_indexed"][:16].replace("T", " ")} UTC')
+        if available and corpus:
+            tag = st.selectbox("Civic tag", list(available),
+                               format_func=lambda item: f"{item} ({available[item]:,} bills)")
+            page_count = (available[tag] + 49) // 50
+            page = st.number_input("Tag results page", 1, page_count, 1, key=f"civic_page:{tag}")
+            ids = indexed_civic_bills(DATA_DIR, tag, offset=(page - 1) * 50)
+            matches = corpus.search_bills(bill_ids=ids, limit=50)
+            if not matches.empty:
+                render_bill_page(matches, bill_notes, tracked_bills, "civic")
+        else:
+            st.info("Shared matches appear after the next corpus sync or a civic tag index rebuild.")
+    except sqlite3.Error:
+        st.warning("The civic tag index is temporarily unavailable.")
+
+
 elif app_mode == "Topic Inbox":
     st.subheader("Topic Inbox")
-    topics = load_bill_workspace(TOPICS_FILE, {})
+    st.caption("Create private tags and track phrases across current and historical bills.")
+    topics = private_topic_rules
     with st.form("new_research_topic", clear_on_submit=True):
         name = st.text_input("Topic name")
         inputs = topic_rule_fields("new_topic")
+        auto_tag = st.checkbox("Tag matching bills", value=True)
+        track_matches = st.checkbox("Track matches in Daily Review", value=True)
         if st.form_submit_button("Save topic"):
             name = name.strip()
             try:
                 rules = parse_topic_rules(*inputs)
                 if not name:
                     raise ValueError("Enter a topic name.")
+                if not (auto_tag or track_matches):
+                    raise ValueError("Choose tagging, tracking, or both.")
 
                 def add_topic(current):
                     if name.casefold() in current:
                         raise ValueError("A topic with that name already exists.")
-                    current[name.casefold()] = {"name": name, **rules, "seen": []}
+                    current[name.casefold()] = {
+                        "name": name, **rules, "seen": [], "auto_tag": auto_tag, "track_matches": track_matches,
+                    }
 
                 update_workspace(TOPICS_FILE, {}, add_topic)
             except (OSError, ValueError, sqlite3.Error) as error:
@@ -2186,14 +2226,21 @@ elif app_mode == "Topic Inbox":
         with st.expander("Manage topic"):
             with st.form(f"edit_topic_{topic_id}"):
                 edits = topic_rule_fields(f"edit_topic_{topic_id}", topic)
+                auto_tag = st.checkbox("Tag matching bills", value=topic.get("auto_tag", False), key=f"tag:{topic_id}")
+                track_matches = st.checkbox("Track matches in Daily Review", value=topic.get("track_matches", True),
+                                            key=f"track:{topic_id}")
                 if st.form_submit_button("Update matching rules"):
                     try:
                         rules = parse_topic_rules(*edits)
+                        if not (auto_tag or track_matches):
+                            raise ValueError("Choose tagging, tracking, or both.")
 
                         def update_rules(current):
                             if topic_id not in current:
                                 raise ValueError("This topic was removed in another session.")
-                            current[topic_id].update(rules)
+                            update_personal_topic(
+                                current[topic_id], rules, auto_tag=auto_tag, track_matches=track_matches,
+                            )
 
                         update_workspace(TOPICS_FILE, {}, update_rules)
                     except (OSError, ValueError, sqlite3.Error) as error:
