@@ -37,3 +37,9 @@ All 54 local regressions passed with isolated PostgreSQL, and the browser smoke 
 ## Cold-backup rehearsal checkpoint
 
 An automated rehearsal restored a synthetic cold archive, upgraded the three databases, and verified historical coverage, staff profiles, account and workspace data, attachments and a pending job. It rejected archive links and paths outside the data root. The regression suite passed all 55 tests with isolated PostgreSQL, and the final rehearsal-specific checks passed after adding application-level read verification. Both GitHub Actions jobs passed on the preceding staff/job migration. The actual private VPS archive and a PostgreSQL restore remain separate operator checks.
+
+## Production cutover to experimental release
+
+The VPS switched to 6653459. The operator verified a fresh pre-upgrade filesystem backup, SQLite integrity checks on all three version 1 databases, and the active service health endpoint on port 8501. A populated copy of the preceding archive restored four accounts, a tracked bill and its note, 18 historical sessions, and 120 legislator profiles. The restored archive contained no queued jobs, so job recovery is established by the test fixture rather than the production rehearsal.
+
+The operator signed in after cutover and confirmed that the tracked bill and original note survived. A new edit saved after cutover has not yet been confirmed. The legacy staff cron is paused. PostgreSQL restore, live email delivery and source accuracy remain separate gates. [Both GitHub Actions jobs passed on 6653459](https://github.com/mattcallaway/legiscan_private/actions/runs/45153942848).
