@@ -99,6 +99,7 @@ Open [the local app](http://localhost:8501) unless your terminal prints a differ
 | --- | --- | --- |
 | `DATA_DIR` | App, worker, CLI, sender | Absolute, private, writable, persistent directory. Use the same path for every process on an instance. |
 | `REPO_DIR` | App and Git publishing | A separate plain directory is sufficient for private operation. Use an existing normal checkout only for intentional publication. |
+| `TRACKER_REGISTRATION_MODE` | App | `open` (default), `admin` (admin user management only), or `disabled` (operator provisioning only). |
 | `API_KEY` | App and ingestion processes | Server LegiScan API key. Required for current bill ingestion and shared keyword scanning. |
 | `CONGRESS_API_KEY` | App | Optional Congress.gov key for federal term lookup. |
 | `LEGISCAN_BACKGROUND_JOBS` | App | Optional `1`, `true`, or `yes` queues supported jobs for a separately started worker. |
@@ -107,6 +108,12 @@ Open [the local app](http://localhost:8501) unless your terminal prints a differ
 | `RESEND_API_KEY` | App, email schema setup and sender | Optional sending key for notifications. |
 | `RESEND_FROM_EMAIL` | App, email schema setup and sender | Optional verified sender such as `Tracker <alerts@example.org>`. |
 | `TEST_NOTIFICATION_DATABASE_URL` | Tests only | DSN for a disposable PostgreSQL database. |
+
+### Account enrollment and login
+
+Set `TRACKER_REGISTRATION_MODE=admin` on a hosted instance to close public signup while allowing signed-in administrators to create regular accounts. Use `disabled` to close all browser account creation. With either setting, an authorized local operator can bootstrap a fresh data directory through `auth.register_user` under the service identity. If unset, `open` preserves public signup and first-account administrator behavior. An unrecognized value disables browser account creation. Existing account login and guest browsing work in every mode.
+
+Sign-in allows eight password attempts per known username in a five-minute window. A successful login clears the counter. Unknown usernames share a separate budget. This protects the password verification path; a public deployment still benefits from proxy-level request limits. The account directory must be writable by the service because it stores the SQLite attempt counters next to `users.json`.
 
 ### LegiScan
 

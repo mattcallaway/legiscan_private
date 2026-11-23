@@ -19,15 +19,15 @@
     {
       "path": "auth.py",
       "module": "auth",
-      "source_sha256_normalized_newlines": "9447bc4082d705f90c6a04fde23d14e4ded537ea5c7cd62cf82d872cb53ebaf0",
+      "source_sha256_normalized_newlines": "9f994fee1b1d906ba7334251448a6a9d8570e94b10f3db98aa6f81890f862f36",
       "symbols": [
         {
           "id": "auth.get_user_data_dir",
           "name": "get_user_data_dir",
           "owner": "auth",
           "kind": "function",
-          "line": 35,
-          "end_line": 44,
+          "line": 41,
+          "end_line": 50,
           "decorators": [],
           "parameters": "username: str",
           "returns": "str",
@@ -38,8 +38,8 @@
           "name": "get_guest_data_dir",
           "owner": "auth",
           "kind": "function",
-          "line": 47,
-          "end_line": 50,
+          "line": 53,
+          "end_line": 56,
           "decorators": [],
           "parameters": "",
           "returns": "str",
@@ -50,8 +50,8 @@
           "name": "_serialize_account_write",
           "owner": "auth",
           "kind": "function",
-          "line": 53,
-          "end_line": 64,
+          "line": 59,
+          "end_line": 70,
           "decorators": [],
           "parameters": "function",
           "returns": null,
@@ -62,8 +62,8 @@
           "name": "serialized",
           "owner": "auth._serialize_account_write",
           "kind": "function",
-          "line": 55,
-          "end_line": 63,
+          "line": 61,
+          "end_line": 69,
           "decorators": [
             "wraps(function)"
           ],
@@ -76,8 +76,8 @@
           "name": "_load_users",
           "owner": "auth",
           "kind": "function",
-          "line": 68,
-          "end_line": 79,
+          "line": 74,
+          "end_line": 85,
           "decorators": [],
           "parameters": "",
           "returns": "dict",
@@ -88,8 +88,8 @@
           "name": "_save_users",
           "owner": "auth",
           "kind": "function",
-          "line": 82,
-          "end_line": 101,
+          "line": 88,
+          "end_line": 107,
           "decorators": [],
           "parameters": "users: dict",
           "returns": "bool",
@@ -100,8 +100,8 @@
           "name": "_password_error",
           "owner": "auth",
           "kind": "function",
-          "line": 105,
-          "end_line": 110,
+          "line": 111,
+          "end_line": 116,
           "decorators": [],
           "parameters": "password",
           "returns": null,
@@ -112,8 +112,8 @@
           "name": "_hash_password",
           "owner": "auth",
           "kind": "function",
-          "line": 113,
-          "end_line": 114,
+          "line": 119,
+          "end_line": 120,
           "decorators": [],
           "parameters": "plaintext: str",
           "returns": "str",
@@ -124,8 +124,8 @@
           "name": "_check_password",
           "owner": "auth",
           "kind": "function",
-          "line": 117,
-          "end_line": 121,
+          "line": 123,
+          "end_line": 127,
           "decorators": [],
           "parameters": "plaintext: str, hashed: str",
           "returns": "bool",
@@ -136,8 +136,8 @@
           "name": "get_current_user",
           "owner": "auth",
           "kind": "function",
-          "line": 125,
-          "end_line": 143,
+          "line": 131,
+          "end_line": 149,
           "decorators": [],
           "parameters": "",
           "returns": "dict | None",
@@ -148,8 +148,8 @@
           "name": "is_admin",
           "owner": "auth",
           "kind": "function",
-          "line": 146,
-          "end_line": 148,
+          "line": 152,
+          "end_line": 154,
           "decorators": [],
           "parameters": "",
           "returns": "bool",
@@ -160,8 +160,20 @@
           "name": "logout",
           "owner": "auth",
           "kind": "function",
-          "line": 151,
-          "end_line": 155,
+          "line": 157,
+          "end_line": 161,
+          "decorators": [],
+          "parameters": "",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "auth.registration_mode",
+          "name": "registration_mode",
+          "owner": "auth",
+          "kind": "function",
+          "line": 164,
+          "end_line": 167,
           "decorators": [],
           "parameters": "",
           "returns": null,
@@ -172,8 +184,8 @@
           "name": "register_user",
           "owner": "auth",
           "kind": "function",
-          "line": 159,
-          "end_line": 192,
+          "line": 171,
+          "end_line": 173,
           "decorators": [
             "_serialize_account_write"
           ],
@@ -182,12 +194,76 @@
           "async_function": false
         },
         {
+          "id": "auth.register_public_user",
+          "name": "register_public_user",
+          "owner": "auth",
+          "kind": "function",
+          "line": 177,
+          "end_line": 180,
+          "decorators": [
+            "_serialize_account_write"
+          ],
+          "parameters": "username, password, api_key=''",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "auth.create_managed_user",
+          "name": "create_managed_user",
+          "owner": "auth",
+          "kind": "function",
+          "line": 184,
+          "end_line": 187,
+          "decorators": [
+            "_serialize_account_write"
+          ],
+          "parameters": "username, password",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "auth._create_account",
+          "name": "_create_account",
+          "owner": "auth",
+          "kind": "function",
+          "line": 190,
+          "end_line": 220,
+          "decorators": [],
+          "parameters": "username, password, api_key, *, public=False, managed=False",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "auth._reserve_login_attempt",
+          "name": "_reserve_login_attempt",
+          "owner": "auth",
+          "kind": "function",
+          "line": 223,
+          "end_line": 241,
+          "decorators": [],
+          "parameters": "identity, now",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "auth._clear_login_attempts",
+          "name": "_clear_login_attempts",
+          "owner": "auth",
+          "kind": "function",
+          "line": 244,
+          "end_line": 246,
+          "decorators": [],
+          "parameters": "identity",
+          "returns": null,
+          "async_function": false
+        },
+        {
           "id": "auth.login_user",
           "name": "login_user",
           "owner": "auth",
           "kind": "function",
-          "line": 195,
-          "end_line": 214,
+          "line": 249,
+          "end_line": 276,
           "decorators": [],
           "parameters": "username: str, password: str",
           "returns": "tuple[bool, str]",
@@ -198,8 +274,8 @@
           "name": "login_as_guest",
           "owner": "auth",
           "kind": "function",
-          "line": 217,
-          "end_line": 224,
+          "line": 279,
+          "end_line": 286,
           "decorators": [],
           "parameters": "",
           "returns": null,
@@ -210,8 +286,8 @@
           "name": "is_guest",
           "owner": "auth",
           "kind": "function",
-          "line": 227,
-          "end_line": 229,
+          "line": 289,
+          "end_line": 291,
           "decorators": [],
           "parameters": "",
           "returns": "bool",
@@ -222,8 +298,8 @@
           "name": "update_password",
           "owner": "auth",
           "kind": "function",
-          "line": 233,
-          "end_line": 246,
+          "line": 295,
+          "end_line": 308,
           "decorators": [
             "_serialize_account_write"
           ],
@@ -236,8 +312,8 @@
           "name": "update_api_key",
           "owner": "auth",
           "kind": "function",
-          "line": 250,
-          "end_line": 260,
+          "line": 312,
+          "end_line": 322,
           "decorators": [
             "_serialize_account_write"
           ],
@@ -250,8 +326,8 @@
           "name": "admin_list_users",
           "owner": "auth",
           "kind": "function",
-          "line": 263,
-          "end_line": 273,
+          "line": 325,
+          "end_line": 335,
           "decorators": [],
           "parameters": "",
           "returns": "list[dict]",
@@ -262,8 +338,8 @@
           "name": "admin_delete_user",
           "owner": "auth",
           "kind": "function",
-          "line": 277,
-          "end_line": 285,
+          "line": 339,
+          "end_line": 347,
           "decorators": [
             "_serialize_account_write"
           ],
@@ -276,8 +352,8 @@
           "name": "admin_set_role",
           "owner": "auth",
           "kind": "function",
-          "line": 289,
-          "end_line": 299,
+          "line": 351,
+          "end_line": 361,
           "decorators": [
             "_serialize_account_write"
           ],
@@ -290,8 +366,8 @@
           "name": "render_auth_page",
           "owner": "auth",
           "kind": "function",
-          "line": 303,
-          "end_line": 390,
+          "line": 365,
+          "end_line": 457,
           "decorators": [],
           "parameters": "",
           "returns": "bool",
@@ -302,8 +378,8 @@
           "name": "render_account_settings_sidebar",
           "owner": "auth",
           "kind": "function",
-          "line": 394,
-          "end_line": 445,
+          "line": 461,
+          "end_line": 512,
           "decorators": [],
           "parameters": "",
           "returns": null,
@@ -314,8 +390,8 @@
           "name": "render_admin_user_management",
           "owner": "auth",
           "kind": "function",
-          "line": 449,
-          "end_line": 503,
+          "line": 516,
+          "end_line": 583,
           "decorators": [],
           "parameters": "",
           "returns": null,
@@ -368,62 +444,76 @@
         {
           "owner": "auth",
           "line": 18,
+          "binding": "sha256",
+          "target": "hashlib.sha256",
+          "imported": "hashlib"
+        },
+        {
+          "owner": "auth",
+          "line": 19,
+          "binding": "time",
+          "target": "time.time",
+          "imported": "time"
+        },
+        {
+          "owner": "auth",
+          "line": 20,
           "binding": "NamedTemporaryFile",
           "target": "tempfile.NamedTemporaryFile",
           "imported": "tempfile"
         },
         {
           "owner": "auth",
-          "line": 18,
+          "line": 20,
           "binding": "TemporaryDirectory",
           "target": "tempfile.TemporaryDirectory",
           "imported": "tempfile"
         },
         {
           "owner": "auth",
-          "line": 19,
+          "line": 21,
           "binding": "uuid4",
           "target": "uuid.uuid4",
           "imported": "uuid"
         },
         {
           "owner": "auth",
-          "line": 20,
+          "line": 22,
           "binding": "datetime",
           "target": "datetime.datetime",
           "imported": "datetime"
         },
         {
           "owner": "auth",
-          "line": 20,
+          "line": 22,
           "binding": "timezone",
           "target": "datetime.timezone",
           "imported": "datetime"
         },
         {
           "owner": "auth",
-          "line": 22,
+          "line": 24,
           "binding": "bcrypt",
           "target": "bcrypt",
           "imported": "bcrypt"
         },
         {
           "owner": "auth",
-          "line": 23,
+          "line": 25,
           "binding": "st",
           "target": "streamlit",
           "imported": "streamlit"
         },
         {
           "owner": "auth",
-          "line": 25,
+          "line": 27,
           "binding": "DATA_DIR",
           "target": "config.DATA_DIR",
           "imported": "config"
         },
         {
           "owner": "auth.render_admin_user_management",
-          "line": 461,
+          "line": 541,
           "binding": "pd",
           "target": "pandas",
           "imported": "pandas"
@@ -432,7 +522,7 @@
       "calls": [
         {
           "caller": "auth",
-          "line": 27,
+          "line": 29,
           "column": 9,
           "expression": "logging.getLogger",
           "positional_arguments": 1,
@@ -442,7 +532,7 @@
         },
         {
           "caller": "auth",
-          "line": 30,
+          "line": 36,
           "column": 15,
           "expression": "os.path.join",
           "positional_arguments": 2,
@@ -452,7 +542,7 @@
         },
         {
           "caller": "auth",
-          "line": 31,
+          "line": 37,
           "column": 15,
           "expression": "os.path.join",
           "positional_arguments": 2,
@@ -462,7 +552,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 37,
+          "line": 43,
           "column": 11,
           "expression": "_load_users().get",
           "positional_arguments": 1,
@@ -472,7 +562,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 37,
+          "line": 43,
           "column": 11,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -484,7 +574,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 39,
+          "line": 45,
           "column": 14,
           "expression": "ValueError",
           "positional_arguments": 1,
@@ -494,7 +584,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 40,
+          "line": 46,
           "column": 19,
           "expression": "user.get",
           "positional_arguments": 1,
@@ -504,7 +594,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 41,
+          "line": 47,
           "column": 11,
           "expression": "os.path.join",
           "positional_arguments": 2,
@@ -514,7 +604,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 42,
+          "line": 48,
           "column": 16,
           "expression": "os.path.join",
           "positional_arguments": 2,
@@ -524,7 +614,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 43,
+          "line": 49,
           "column": 4,
           "expression": "os.makedirs",
           "positional_arguments": 1,
@@ -536,7 +626,7 @@
         },
         {
           "caller": "auth.get_user_data_dir",
-          "line": 43,
+          "line": 49,
           "column": 16,
           "expression": "os.path.join",
           "positional_arguments": 2,
@@ -546,7 +636,7 @@
         },
         {
           "caller": "auth.get_guest_data_dir",
-          "line": 49,
+          "line": 55,
           "column": 43,
           "expression": "TemporaryDirectory",
           "positional_arguments": 0,
@@ -558,7 +648,7 @@
         },
         {
           "caller": "auth._serialize_account_write",
-          "line": 54,
+          "line": 60,
           "column": 5,
           "expression": "wraps",
           "positional_arguments": 1,
@@ -568,7 +658,7 @@
         },
         {
           "caller": "auth._serialize_account_write.serialized",
-          "line": 57,
+          "line": 63,
           "column": 12,
           "expression": "os.makedirs",
           "positional_arguments": 1,
@@ -580,7 +670,7 @@
         },
         {
           "caller": "auth._serialize_account_write.serialized",
-          "line": 59,
+          "line": 65,
           "column": 17,
           "expression": "closing",
           "positional_arguments": 1,
@@ -590,7 +680,7 @@
         },
         {
           "caller": "auth._serialize_account_write.serialized",
-          "line": 59,
+          "line": 65,
           "column": 25,
           "expression": "sqlite3.connect",
           "positional_arguments": 1,
@@ -602,7 +692,7 @@
         },
         {
           "caller": "auth._serialize_account_write.serialized",
-          "line": 60,
+          "line": 66,
           "column": 16,
           "expression": "lock.execute",
           "positional_arguments": 1,
@@ -612,7 +702,7 @@
         },
         {
           "caller": "auth._serialize_account_write.serialized",
-          "line": 61,
+          "line": 67,
           "column": 23,
           "expression": "function",
           "positional_arguments": 1,
@@ -624,7 +714,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 69,
+          "line": 75,
           "column": 11,
           "expression": "os.path.exists",
           "positional_arguments": 1,
@@ -634,7 +724,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 72,
+          "line": 78,
           "column": 13,
           "expression": "open",
           "positional_arguments": 2,
@@ -646,7 +736,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 73,
+          "line": 79,
           "column": 20,
           "expression": "json.load",
           "positional_arguments": 1,
@@ -656,7 +746,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 74,
+          "line": 80,
           "column": 15,
           "expression": "isinstance",
           "positional_arguments": 2,
@@ -666,7 +756,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 74,
+          "line": 80,
           "column": 46,
           "expression": "all",
           "positional_arguments": 1,
@@ -676,7 +766,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 74,
+          "line": 80,
           "column": 50,
           "expression": "isinstance",
           "positional_arguments": 2,
@@ -686,7 +776,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 74,
+          "line": 80,
           "column": 89,
           "expression": "users.values",
           "positional_arguments": 0,
@@ -696,7 +786,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 75,
+          "line": 81,
           "column": 18,
           "expression": "ValueError",
           "positional_arguments": 1,
@@ -706,7 +796,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 78,
+          "line": 84,
           "column": 8,
           "expression": "logger.error",
           "positional_arguments": 2,
@@ -716,7 +806,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 78,
+          "line": 84,
           "column": 62,
           "expression": "type",
           "positional_arguments": 1,
@@ -726,7 +816,7 @@
         },
         {
           "caller": "auth._load_users",
-          "line": 79,
+          "line": 85,
           "column": 14,
           "expression": "RuntimeError",
           "positional_arguments": 1,
@@ -736,7 +826,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 85,
+          "line": 91,
           "column": 13,
           "expression": "NamedTemporaryFile",
           "positional_arguments": 0,
@@ -751,7 +841,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 87,
+          "line": 93,
           "column": 12,
           "expression": "json.dump",
           "positional_arguments": 2,
@@ -763,7 +853,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 88,
+          "line": 94,
           "column": 12,
           "expression": "file.flush",
           "positional_arguments": 0,
@@ -773,7 +863,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 89,
+          "line": 95,
           "column": 12,
           "expression": "os.fsync",
           "positional_arguments": 1,
@@ -783,7 +873,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 89,
+          "line": 95,
           "column": 21,
           "expression": "file.fileno",
           "positional_arguments": 0,
@@ -793,7 +883,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 90,
+          "line": 96,
           "column": 8,
           "expression": "os.replace",
           "positional_arguments": 2,
@@ -803,7 +893,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 94,
+          "line": 100,
           "column": 8,
           "expression": "logger.error",
           "positional_arguments": 2,
@@ -813,7 +903,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 94,
+          "line": 100,
           "column": 65,
           "expression": "type",
           "positional_arguments": 1,
@@ -823,7 +913,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 99,
+          "line": 105,
           "column": 16,
           "expression": "os.unlink",
           "positional_arguments": 1,
@@ -833,7 +923,7 @@
         },
         {
           "caller": "auth._save_users",
-          "line": 101,
+          "line": 107,
           "column": 16,
           "expression": "logger.warning",
           "positional_arguments": 1,
@@ -843,7 +933,7 @@
         },
         {
           "caller": "auth._password_error",
-          "line": 106,
+          "line": 112,
           "column": 7,
           "expression": "len",
           "positional_arguments": 1,
@@ -853,7 +943,7 @@
         },
         {
           "caller": "auth._password_error",
-          "line": 108,
+          "line": 114,
           "column": 7,
           "expression": "len",
           "positional_arguments": 1,
@@ -863,7 +953,7 @@
         },
         {
           "caller": "auth._password_error",
-          "line": 108,
+          "line": 114,
           "column": 11,
           "expression": "password.encode",
           "positional_arguments": 1,
@@ -873,7 +963,7 @@
         },
         {
           "caller": "auth._hash_password",
-          "line": 114,
+          "line": 120,
           "column": 11,
           "expression": "bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode",
           "positional_arguments": 0,
@@ -883,7 +973,7 @@
         },
         {
           "caller": "auth._hash_password",
-          "line": 114,
+          "line": 120,
           "column": 11,
           "expression": "bcrypt.hashpw",
           "positional_arguments": 2,
@@ -893,7 +983,7 @@
         },
         {
           "caller": "auth._hash_password",
-          "line": 114,
+          "line": 120,
           "column": 25,
           "expression": "plaintext.encode",
           "positional_arguments": 0,
@@ -903,7 +993,7 @@
         },
         {
           "caller": "auth._hash_password",
-          "line": 114,
+          "line": 120,
           "column": 45,
           "expression": "bcrypt.gensalt",
           "positional_arguments": 0,
@@ -913,7 +1003,7 @@
         },
         {
           "caller": "auth._check_password",
-          "line": 119,
+          "line": 125,
           "column": 15,
           "expression": "bcrypt.checkpw",
           "positional_arguments": 2,
@@ -923,7 +1013,7 @@
         },
         {
           "caller": "auth._check_password",
-          "line": 119,
+          "line": 125,
           "column": 30,
           "expression": "plaintext.encode",
           "positional_arguments": 0,
@@ -933,7 +1023,7 @@
         },
         {
           "caller": "auth._check_password",
-          "line": 119,
+          "line": 125,
           "column": 50,
           "expression": "hashed.encode",
           "positional_arguments": 0,
@@ -943,7 +1033,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 127,
+          "line": 133,
           "column": 13,
           "expression": "st.session_state.get",
           "positional_arguments": 1,
@@ -953,7 +1043,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 128,
+          "line": 134,
           "column": 21,
           "expression": "active.get",
           "positional_arguments": 1,
@@ -963,7 +1053,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 131,
+          "line": 137,
           "column": 17,
           "expression": "_load_users().get",
           "positional_arguments": 1,
@@ -973,7 +1063,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 131,
+          "line": 137,
           "column": 17,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -985,7 +1075,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 134,
+          "line": 140,
           "column": 25,
           "expression": "active.get",
           "positional_arguments": 1,
@@ -995,7 +1085,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 134,
+          "line": 140,
           "column": 55,
           "expression": "stored.get",
           "positional_arguments": 1,
@@ -1005,7 +1095,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 135,
+          "line": 141,
           "column": 8,
           "expression": "logout",
           "positional_arguments": 0,
@@ -1017,7 +1107,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 137,
+          "line": 143,
           "column": 15,
           "expression": "stored.get",
           "positional_arguments": 1,
@@ -1027,7 +1117,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 138,
+          "line": 144,
           "column": 7,
           "expression": "active.get",
           "positional_arguments": 1,
@@ -1037,7 +1127,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 139,
+          "line": 145,
           "column": 8,
           "expression": "logout",
           "positional_arguments": 0,
@@ -1049,7 +1139,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 141,
+          "line": 147,
           "column": 21,
           "expression": "stored.get",
           "positional_arguments": 2,
@@ -1059,7 +1149,7 @@
         },
         {
           "caller": "auth.get_current_user",
-          "line": 142,
+          "line": 148,
           "column": 24,
           "expression": "stored.get",
           "positional_arguments": 2,
@@ -1069,7 +1159,7 @@
         },
         {
           "caller": "auth.is_admin",
-          "line": 147,
+          "line": 153,
           "column": 8,
           "expression": "get_current_user",
           "positional_arguments": 0,
@@ -1081,7 +1171,7 @@
         },
         {
           "caller": "auth.is_admin",
-          "line": 148,
+          "line": 154,
           "column": 29,
           "expression": "u.get",
           "positional_arguments": 1,
@@ -1091,7 +1181,7 @@
         },
         {
           "caller": "auth.logout",
-          "line": 152,
+          "line": 158,
           "column": 12,
           "expression": "st.session_state.pop",
           "positional_arguments": 2,
@@ -1101,7 +1191,7 @@
         },
         {
           "caller": "auth.logout",
-          "line": 154,
+          "line": 160,
           "column": 8,
           "expression": "guest.cleanup",
           "positional_arguments": 0,
@@ -1111,7 +1201,7 @@
         },
         {
           "caller": "auth.logout",
-          "line": 155,
+          "line": 161,
           "column": 4,
           "expression": "st.session_state.clear",
           "positional_arguments": 0,
@@ -1120,8 +1210,114 @@
           "targets": []
         },
         {
+          "caller": "auth.registration_mode",
+          "line": 166,
+          "column": 11,
+          "expression": "os.environ.get('TRACKER_REGISTRATION_MODE', 'open').strip().lower",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.registration_mode",
+          "line": 166,
+          "column": 11,
+          "expression": "os.environ.get('TRACKER_REGISTRATION_MODE', 'open').strip",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.registration_mode",
+          "line": 166,
+          "column": 11,
+          "expression": "os.environ.get",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
           "caller": "auth.register_user",
-          "line": 165,
+          "line": 173,
+          "column": 11,
+          "expression": "_create_account",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth._create_account"
+          ]
+        },
+        {
+          "caller": "auth.register_public_user",
+          "line": 178,
+          "column": 7,
+          "expression": "registration_mode",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.registration_mode"
+          ]
+        },
+        {
+          "caller": "auth.register_public_user",
+          "line": 180,
+          "column": 11,
+          "expression": "_create_account",
+          "positional_arguments": 3,
+          "keyword_arguments": [
+            "public"
+          ],
+          "resolution": "lexical",
+          "targets": [
+            "auth._create_account"
+          ]
+        },
+        {
+          "caller": "auth.create_managed_user",
+          "line": 185,
+          "column": 7,
+          "expression": "registration_mode",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.registration_mode"
+          ]
+        },
+        {
+          "caller": "auth.create_managed_user",
+          "line": 185,
+          "column": 48,
+          "expression": "is_admin",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.is_admin"
+          ]
+        },
+        {
+          "caller": "auth.create_managed_user",
+          "line": 187,
+          "column": 11,
+          "expression": "_create_account",
+          "positional_arguments": 3,
+          "keyword_arguments": [
+            "managed"
+          ],
+          "resolution": "lexical",
+          "targets": [
+            "auth._create_account"
+          ]
+        },
+        {
+          "caller": "auth._create_account",
+          "line": 191,
           "column": 15,
           "expression": "username.strip().lower",
           "positional_arguments": 0,
@@ -1130,8 +1326,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 165,
+          "caller": "auth._create_account",
+          "line": 191,
           "column": 15,
           "expression": "username.strip",
           "positional_arguments": 0,
@@ -1140,8 +1336,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 168,
+          "caller": "auth._create_account",
+          "line": 194,
           "column": 7,
           "expression": "len",
           "positional_arguments": 1,
@@ -1150,8 +1346,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 170,
+          "caller": "auth._create_account",
+          "line": 196,
           "column": 11,
           "expression": "all",
           "positional_arguments": 1,
@@ -1160,8 +1356,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 170,
+          "caller": "auth._create_account",
+          "line": 196,
           "column": 15,
           "expression": "c.isalnum",
           "positional_arguments": 0,
@@ -1170,8 +1366,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 172,
+          "caller": "auth._create_account",
+          "line": 198,
           "column": 16,
           "expression": "_password_error",
           "positional_arguments": 1,
@@ -1182,8 +1378,8 @@
           ]
         },
         {
-          "caller": "auth.register_user",
-          "line": 175,
+          "caller": "auth._create_account",
+          "line": 201,
           "column": 12,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1194,8 +1390,8 @@
           ]
         },
         {
-          "caller": "auth.register_user",
-          "line": 181,
+          "caller": "auth._create_account",
+          "line": 209,
           "column": 25,
           "expression": "_hash_password",
           "positional_arguments": 1,
@@ -1206,8 +1402,8 @@
           ]
         },
         {
-          "caller": "auth.register_user",
-          "line": 182,
+          "caller": "auth._create_account",
+          "line": 210,
           "column": 25,
           "expression": "uuid4",
           "positional_arguments": 0,
@@ -1216,8 +1412,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 184,
+          "caller": "auth._create_account",
+          "line": 212,
           "column": 25,
           "expression": "api_key.strip",
           "positional_arguments": 0,
@@ -1226,8 +1422,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 185,
+          "caller": "auth._create_account",
+          "line": 213,
           "column": 25,
           "expression": "datetime.now(timezone.utc).isoformat",
           "positional_arguments": 0,
@@ -1236,8 +1432,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 185,
+          "caller": "auth._create_account",
+          "line": 213,
           "column": 25,
           "expression": "datetime.now",
           "positional_arguments": 1,
@@ -1246,8 +1442,8 @@
           "targets": []
         },
         {
-          "caller": "auth.register_user",
-          "line": 187,
+          "caller": "auth._create_account",
+          "line": 215,
           "column": 11,
           "expression": "_save_users",
           "positional_arguments": 1,
@@ -1258,8 +1454,8 @@
           ]
         },
         {
-          "caller": "auth.register_user",
-          "line": 190,
+          "caller": "auth._create_account",
+          "line": 218,
           "column": 4,
           "expression": "get_user_data_dir",
           "positional_arguments": 1,
@@ -1270,8 +1466,8 @@
           ]
         },
         {
-          "caller": "auth.register_user",
-          "line": 191,
+          "caller": "auth._create_account",
+          "line": 219,
           "column": 4,
           "expression": "logger.info",
           "positional_arguments": 1,
@@ -1280,8 +1476,144 @@
           "targets": []
         },
         {
+          "caller": "auth._reserve_login_attempt",
+          "line": 225,
+          "column": 4,
+          "expression": "os.makedirs",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "exist_ok"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 226,
+          "column": 9,
+          "expression": "closing",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 226,
+          "column": 17,
+          "expression": "sqlite3.connect",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "timeout"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 227,
+          "column": 8,
+          "expression": "connection.execute",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 228,
+          "column": 8,
+          "expression": "connection.execute",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 231,
+          "column": 8,
+          "expression": "connection.execute",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 232,
+          "column": 8,
+          "expression": "connection.execute",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 233,
+          "column": 14,
+          "expression": "connection.execute('SELECT count FROM attempts WHERE identity = ?', (identity,)).fetchone",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 233,
+          "column": 14,
+          "expression": "connection.execute",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._reserve_login_attempt",
+          "line": 236,
+          "column": 8,
+          "expression": "connection.execute",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._clear_login_attempts",
+          "line": 245,
+          "column": 9,
+          "expression": "closing",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._clear_login_attempts",
+          "line": 245,
+          "column": 17,
+          "expression": "sqlite3.connect",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "timeout"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth._clear_login_attempts",
+          "line": 246,
+          "column": 8,
+          "expression": "connection.execute",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
           "caller": "auth.login_user",
-          "line": 197,
+          "line": 251,
           "column": 15,
           "expression": "username.strip().lower",
           "positional_arguments": 0,
@@ -1291,7 +1623,7 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 197,
+          "line": 251,
           "column": 15,
           "expression": "username.strip",
           "positional_arguments": 0,
@@ -1301,7 +1633,27 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 199,
+          "line": 253,
+          "column": 23,
+          "expression": "len",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 253,
+          "column": 27,
+          "expression": "password.encode",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 256,
           "column": 16,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1313,8 +1665,8 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 202,
-          "column": 8,
+          "line": 257,
+          "column": 12,
           "expression": "users.get",
           "positional_arguments": 1,
           "keyword_arguments": [],
@@ -1323,9 +1675,19 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 203,
-          "column": 20,
-          "expression": "len",
+          "line": 258,
+          "column": 19,
+          "expression": "sha256(username.encode()).hexdigest",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 258,
+          "column": 19,
+          "expression": "sha256",
           "positional_arguments": 1,
           "keyword_arguments": [],
           "resolution": "unresolved",
@@ -1333,18 +1695,40 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 203,
-          "column": 24,
-          "expression": "password.encode",
-          "positional_arguments": 1,
+          "line": 258,
+          "column": 26,
+          "expression": "username.encode",
+          "positional_arguments": 0,
           "keyword_arguments": [],
           "resolution": "unresolved",
           "targets": []
         },
         {
           "caller": "auth.login_user",
-          "line": 203,
-          "column": 62,
+          "line": 259,
+          "column": 15,
+          "expression": "_reserve_login_attempt",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth._reserve_login_attempt"
+          ]
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 259,
+          "column": 48,
+          "expression": "time",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 261,
+          "column": 16,
           "expression": "_check_password",
           "positional_arguments": 2,
           "keyword_arguments": [],
@@ -1355,8 +1739,8 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 203,
-          "column": 88,
+          "line": 261,
+          "column": 42,
           "expression": "u.get",
           "positional_arguments": 2,
           "keyword_arguments": [],
@@ -1365,7 +1749,7 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 208,
+          "line": 262,
           "column": 24,
           "expression": "u.get",
           "positional_arguments": 1,
@@ -1375,7 +1759,29 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 209,
+          "line": 264,
+          "column": 8,
+          "expression": "_clear_login_attempts",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth._clear_login_attempts"
+          ]
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 270,
+          "column": 24,
+          "expression": "u.get",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.login_user",
+          "line": 271,
           "column": 31,
           "expression": "u.get",
           "positional_arguments": 1,
@@ -1385,7 +1791,7 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 210,
+          "line": 272,
           "column": 21,
           "expression": "u.get",
           "positional_arguments": 2,
@@ -1395,7 +1801,7 @@
         },
         {
           "caller": "auth.login_user",
-          "line": 211,
+          "line": 273,
           "column": 21,
           "expression": "u.get",
           "positional_arguments": 2,
@@ -1405,7 +1811,7 @@
         },
         {
           "caller": "auth.is_guest",
-          "line": 228,
+          "line": 290,
           "column": 8,
           "expression": "get_current_user",
           "positional_arguments": 0,
@@ -1417,7 +1823,7 @@
         },
         {
           "caller": "auth.is_guest",
-          "line": 229,
+          "line": 291,
           "column": 29,
           "expression": "u.get",
           "positional_arguments": 2,
@@ -1427,7 +1833,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 234,
+          "line": 296,
           "column": 16,
           "expression": "_password_error",
           "positional_arguments": 1,
@@ -1439,7 +1845,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 236,
+          "line": 298,
           "column": 12,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1451,7 +1857,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 239,
+          "line": 301,
           "column": 39,
           "expression": "_hash_password",
           "positional_arguments": 1,
@@ -1463,7 +1869,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 240,
+          "line": 302,
           "column": 45,
           "expression": "uuid4",
           "positional_arguments": 0,
@@ -1473,7 +1879,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 241,
+          "line": 303,
           "column": 9,
           "expression": "_save_users",
           "positional_arguments": 1,
@@ -1485,7 +1891,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 243,
+          "line": 305,
           "column": 17,
           "expression": "st.session_state.get",
           "positional_arguments": 1,
@@ -1495,7 +1901,7 @@
         },
         {
           "caller": "auth.update_password",
-          "line": 244,
+          "line": 306,
           "column": 22,
           "expression": "active.get",
           "positional_arguments": 1,
@@ -1505,7 +1911,7 @@
         },
         {
           "caller": "auth.update_api_key",
-          "line": 251,
+          "line": 313,
           "column": 12,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1517,7 +1923,7 @@
         },
         {
           "caller": "auth.update_api_key",
-          "line": 254,
+          "line": 316,
           "column": 33,
           "expression": "api_key.strip",
           "positional_arguments": 0,
@@ -1527,7 +1933,7 @@
         },
         {
           "caller": "auth.update_api_key",
-          "line": 255,
+          "line": 317,
           "column": 9,
           "expression": "_save_users",
           "positional_arguments": 1,
@@ -1539,7 +1945,7 @@
         },
         {
           "caller": "auth.update_api_key",
-          "line": 258,
+          "line": 320,
           "column": 11,
           "expression": "st.session_state.get('auth_user', {}).get",
           "positional_arguments": 1,
@@ -1549,7 +1955,7 @@
         },
         {
           "caller": "auth.update_api_key",
-          "line": 258,
+          "line": 320,
           "column": 11,
           "expression": "st.session_state.get",
           "positional_arguments": 2,
@@ -1559,7 +1965,7 @@
         },
         {
           "caller": "auth.update_api_key",
-          "line": 259,
+          "line": 321,
           "column": 52,
           "expression": "api_key.strip",
           "positional_arguments": 0,
@@ -1569,7 +1975,7 @@
         },
         {
           "caller": "auth.admin_list_users",
-          "line": 264,
+          "line": 326,
           "column": 12,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1581,7 +1987,7 @@
         },
         {
           "caller": "auth.admin_list_users",
-          "line": 268,
+          "line": 330,
           "column": 26,
           "expression": "v.get",
           "positional_arguments": 2,
@@ -1591,7 +1997,7 @@
         },
         {
           "caller": "auth.admin_list_users",
-          "line": 269,
+          "line": 331,
           "column": 27,
           "expression": "bool",
           "positional_arguments": 1,
@@ -1601,7 +2007,7 @@
         },
         {
           "caller": "auth.admin_list_users",
-          "line": 269,
+          "line": 331,
           "column": 32,
           "expression": "v.get",
           "positional_arguments": 2,
@@ -1611,7 +2017,7 @@
         },
         {
           "caller": "auth.admin_list_users",
-          "line": 270,
+          "line": 332,
           "column": 26,
           "expression": "v.get",
           "positional_arguments": 2,
@@ -1621,7 +2027,7 @@
         },
         {
           "caller": "auth.admin_list_users",
-          "line": 272,
+          "line": 334,
           "column": 20,
           "expression": "users.items",
           "positional_arguments": 0,
@@ -1631,7 +2037,7 @@
         },
         {
           "caller": "auth.admin_delete_user",
-          "line": 278,
+          "line": 340,
           "column": 12,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1643,7 +2049,7 @@
         },
         {
           "caller": "auth.admin_delete_user",
-          "line": 281,
+          "line": 343,
           "column": 7,
           "expression": "users[target].get",
           "positional_arguments": 1,
@@ -1653,7 +2059,7 @@
         },
         {
           "caller": "auth.admin_delete_user",
-          "line": 281,
+          "line": 343,
           "column": 48,
           "expression": "sum",
           "positional_arguments": 1,
@@ -1663,7 +2069,7 @@
         },
         {
           "caller": "auth.admin_delete_user",
-          "line": 281,
+          "line": 343,
           "column": 52,
           "expression": "u.get",
           "positional_arguments": 1,
@@ -1673,7 +2079,7 @@
         },
         {
           "caller": "auth.admin_delete_user",
-          "line": 281,
+          "line": 343,
           "column": 86,
           "expression": "users.values",
           "positional_arguments": 0,
@@ -1683,7 +2089,7 @@
         },
         {
           "caller": "auth.admin_delete_user",
-          "line": 284,
+          "line": 346,
           "column": 9,
           "expression": "_save_users",
           "positional_arguments": 1,
@@ -1695,7 +2101,7 @@
         },
         {
           "caller": "auth.admin_set_role",
-          "line": 290,
+          "line": 352,
           "column": 12,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1707,7 +2113,7 @@
         },
         {
           "caller": "auth.admin_set_role",
-          "line": 295,
+          "line": 357,
           "column": 27,
           "expression": "users[target].get",
           "positional_arguments": 1,
@@ -1717,7 +2123,7 @@
         },
         {
           "caller": "auth.admin_set_role",
-          "line": 295,
+          "line": 357,
           "column": 68,
           "expression": "sum",
           "positional_arguments": 1,
@@ -1727,7 +2133,7 @@
         },
         {
           "caller": "auth.admin_set_role",
-          "line": 295,
+          "line": 357,
           "column": 72,
           "expression": "u.get",
           "positional_arguments": 1,
@@ -1737,7 +2143,7 @@
         },
         {
           "caller": "auth.admin_set_role",
-          "line": 295,
+          "line": 357,
           "column": 106,
           "expression": "users.values",
           "positional_arguments": 0,
@@ -1747,7 +2153,7 @@
         },
         {
           "caller": "auth.admin_set_role",
-          "line": 298,
+          "line": 360,
           "column": 9,
           "expression": "_save_users",
           "positional_arguments": 1,
@@ -1759,7 +2165,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 309,
+          "line": 371,
           "column": 7,
           "expression": "get_current_user",
           "positional_arguments": 0,
@@ -1771,7 +2177,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 312,
+          "line": 374,
           "column": 4,
           "expression": "st.set_page_config",
           "positional_arguments": 0,
@@ -1784,7 +2190,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 315,
+          "line": 377,
           "column": 4,
           "expression": "st.markdown",
           "positional_arguments": 1,
@@ -1796,7 +2202,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 327,
+          "line": 389,
           "column": 7,
           "expression": "st.button",
           "positional_arguments": 1,
@@ -1809,7 +2215,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 333,
+          "line": 395,
           "column": 8,
           "expression": "login_as_guest",
           "positional_arguments": 0,
@@ -1821,7 +2227,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 334,
+          "line": 396,
           "column": 8,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -1831,28 +2237,20 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 336,
-          "column": 4,
-          "expression": "st.caption",
-          "positional_arguments": 1,
+          "line": 398,
+          "column": 25,
+          "expression": "registration_mode",
+          "positional_arguments": 0,
           "keyword_arguments": [],
-          "resolution": "unresolved",
-          "targets": []
+          "resolution": "lexical",
+          "targets": [
+            "auth.registration_mode"
+          ]
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 337,
-          "column": 4,
-          "expression": "st.write",
-          "positional_arguments": 1,
-          "keyword_arguments": [],
-          "resolution": "unresolved",
-          "targets": []
-        },
-        {
-          "caller": "auth.render_auth_page",
-          "line": 339,
-          "column": 30,
+          "line": 400,
+          "column": 34,
           "expression": "st.tabs",
           "positional_arguments": 1,
           "keyword_arguments": [],
@@ -1861,7 +2259,17 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 343,
+          "line": 402,
+          "column": 20,
+          "expression": "st.container",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_auth_page",
+          "line": 406,
           "column": 13,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -1871,7 +2279,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 344,
+          "line": 407,
           "column": 17,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -1883,7 +2291,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 345,
+          "line": 408,
           "column": 17,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -1895,7 +2303,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 346,
+          "line": 409,
           "column": 24,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -1908,7 +2316,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 349,
+          "line": 412,
           "column": 22,
           "expression": "login_user",
           "positional_arguments": 2,
@@ -1920,7 +2328,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 351,
+          "line": 414,
           "column": 16,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -1930,7 +2338,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 353,
+          "line": 416,
           "column": 16,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -1940,7 +2348,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 357,
+          "line": 423,
           "column": 22,
           "expression": "bool",
           "positional_arguments": 1,
@@ -1950,7 +2358,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 357,
+          "line": 423,
           "column": 27,
           "expression": "_load_users",
           "positional_arguments": 0,
@@ -1962,7 +2370,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 359,
+          "line": 425,
           "column": 12,
           "expression": "st.info",
           "positional_arguments": 1,
@@ -1972,7 +2380,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 364,
+          "line": 430,
           "column": 13,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -1982,7 +2390,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 365,
+          "line": 431,
           "column": 17,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -1994,7 +2402,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 366,
+          "line": 432,
           "column": 17,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -2006,7 +2414,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 367,
+          "line": 433,
           "column": 18,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -2018,11 +2426,12 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 368,
+          "line": 434,
           "column": 17,
           "expression": "st.text_input",
           "positional_arguments": 1,
           "keyword_arguments": [
+            "type",
             "placeholder",
             "help"
           ],
@@ -2031,7 +2440,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 373,
+          "line": 440,
           "column": 28,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -2044,7 +2453,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 379,
+          "line": 446,
           "column": 16,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2054,19 +2463,19 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 381,
+          "line": 448,
           "column": 26,
-          "expression": "register_user",
+          "expression": "register_public_user",
           "positional_arguments": 3,
           "keyword_arguments": [],
           "resolution": "lexical",
           "targets": [
-            "auth.register_user"
+            "auth.register_public_user"
           ]
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 384,
+          "line": 451,
           "column": 20,
           "expression": "login_user",
           "positional_arguments": 2,
@@ -2078,7 +2487,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 385,
+          "line": 452,
           "column": 20,
           "expression": "st.success",
           "positional_arguments": 1,
@@ -2088,7 +2497,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 386,
+          "line": 453,
           "column": 20,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -2098,7 +2507,7 @@
         },
         {
           "caller": "auth.render_auth_page",
-          "line": 388,
+          "line": 455,
           "column": 20,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2108,7 +2517,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 399,
+          "line": 466,
           "column": 11,
           "expression": "get_current_user",
           "positional_arguments": 0,
@@ -2120,7 +2529,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 403,
+          "line": 470,
           "column": 7,
           "expression": "user.get",
           "positional_arguments": 1,
@@ -2130,7 +2539,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 404,
+          "line": 471,
           "column": 13,
           "expression": "st.sidebar.expander",
           "positional_arguments": 1,
@@ -2140,7 +2549,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 405,
+          "line": 472,
           "column": 12,
           "expression": "st.caption",
           "positional_arguments": 1,
@@ -2150,7 +2559,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 406,
+          "line": 473,
           "column": 12,
           "expression": "st.write",
           "positional_arguments": 1,
@@ -2160,7 +2569,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 407,
+          "line": 474,
           "column": 15,
           "expression": "st.button",
           "positional_arguments": 1,
@@ -2173,7 +2582,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 408,
+          "line": 475,
           "column": 16,
           "expression": "logout",
           "positional_arguments": 0,
@@ -2185,7 +2594,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 409,
+          "line": 476,
           "column": 16,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -2195,7 +2604,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 412,
+          "line": 479,
           "column": 9,
           "expression": "st.sidebar.expander",
           "positional_arguments": 1,
@@ -2205,7 +2614,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 414,
+          "line": 481,
           "column": 8,
           "expression": "st.caption",
           "positional_arguments": 1,
@@ -2215,7 +2624,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 414,
+          "line": 481,
           "column": 51,
           "expression": "user.get",
           "positional_arguments": 2,
@@ -2225,7 +2634,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 416,
+          "line": 483,
           "column": 8,
           "expression": "st.subheader",
           "positional_arguments": 1,
@@ -2235,7 +2644,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 417,
+          "line": 484,
           "column": 13,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -2245,7 +2654,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 418,
+          "line": 485,
           "column": 22,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -2258,7 +2667,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 419,
+          "line": 486,
           "column": 22,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -2271,7 +2680,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 420,
+          "line": 487,
           "column": 15,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -2281,7 +2690,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 422,
+          "line": 489,
           "column": 20,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2291,7 +2700,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 424,
+          "line": 491,
           "column": 30,
           "expression": "update_password",
           "positional_arguments": 2,
@@ -2303,7 +2712,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 425,
+          "line": 492,
           "column": 20,
           "expression": "st.success",
           "positional_arguments": 1,
@@ -2313,7 +2722,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 425,
+          "line": 492,
           "column": 47,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2323,7 +2732,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 427,
+          "line": 494,
           "column": 8,
           "expression": "st.divider",
           "positional_arguments": 0,
@@ -2333,7 +2742,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 428,
+          "line": 495,
           "column": 8,
           "expression": "st.subheader",
           "positional_arguments": 1,
@@ -2343,7 +2752,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 429,
+          "line": 496,
           "column": 22,
           "expression": "user.get",
           "positional_arguments": 2,
@@ -2353,7 +2762,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 430,
+          "line": 497,
           "column": 8,
           "expression": "st.caption",
           "positional_arguments": 1,
@@ -2363,7 +2772,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 434,
+          "line": 501,
           "column": 13,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -2373,7 +2782,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 435,
+          "line": 502,
           "column": 22,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -2388,7 +2797,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 441,
+          "line": 508,
           "column": 15,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -2398,7 +2807,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 442,
+          "line": 509,
           "column": 26,
           "expression": "update_api_key",
           "positional_arguments": 2,
@@ -2410,7 +2819,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 443,
+          "line": 510,
           "column": 16,
           "expression": "st.success",
           "positional_arguments": 1,
@@ -2420,7 +2829,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 443,
+          "line": 510,
           "column": 43,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2430,7 +2839,7 @@
         },
         {
           "caller": "auth.render_account_settings_sidebar",
-          "line": 445,
+          "line": 512,
           "column": 20,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -2440,7 +2849,19 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 454,
+          "line": 521,
+          "column": 11,
+          "expression": "is_admin",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.is_admin"
+          ]
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 523,
           "column": 4,
           "expression": "st.subheader",
           "positional_arguments": 1,
@@ -2450,7 +2871,105 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 455,
+          "line": 524,
+          "column": 7,
+          "expression": "registration_mode",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.registration_mode"
+          ]
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 525,
+          "column": 13,
+          "expression": "st.form",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "clear_on_submit"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 526,
+          "column": 23,
+          "expression": "st.text_input",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 527,
+          "column": 23,
+          "expression": "st.text_input",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "type"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 528,
+          "column": 15,
+          "expression": "st.form_submit_button",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 529,
+          "column": 30,
+          "expression": "create_managed_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.create_managed_user"
+          ]
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 531,
+          "column": 20,
+          "expression": "st.toast",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 532,
+          "column": 20,
+          "expression": "st.rerun",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 534,
+          "column": 20,
+          "expression": "st.error",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "auth.render_admin_user_management",
+          "line": 535,
           "column": 17,
           "expression": "admin_list_users",
           "positional_arguments": 0,
@@ -2462,7 +2981,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 458,
+          "line": 538,
           "column": 8,
           "expression": "st.caption",
           "positional_arguments": 1,
@@ -2472,7 +2991,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 462,
+          "line": 542,
           "column": 9,
           "expression": "pd.DataFrame",
           "positional_arguments": 1,
@@ -2482,7 +3001,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 464,
+          "line": 544,
           "column": 4,
           "expression": "st.dataframe",
           "positional_arguments": 1,
@@ -2495,7 +3014,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 466,
+          "line": 546,
           "column": 4,
           "expression": "st.divider",
           "positional_arguments": 0,
@@ -2505,7 +3024,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 468,
+          "line": 548,
           "column": 19,
           "expression": "st.columns",
           "positional_arguments": 1,
@@ -2515,7 +3034,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 470,
+          "line": 550,
           "column": 19,
           "expression": "get_current_user",
           "positional_arguments": 0,
@@ -2527,7 +3046,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 473,
+          "line": 553,
           "column": 8,
           "expression": "st.markdown",
           "positional_arguments": 1,
@@ -2537,7 +3056,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 474,
+          "line": 554,
           "column": 13,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -2547,7 +3066,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 475,
+          "line": 555,
           "column": 27,
           "expression": "st.selectbox",
           "positional_arguments": 2,
@@ -2559,7 +3078,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 476,
+          "line": 556,
           "column": 27,
           "expression": "st.text_input",
           "positional_arguments": 1,
@@ -2572,7 +3091,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 477,
+          "line": 557,
           "column": 15,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -2582,7 +3101,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 478,
+          "line": 558,
           "column": 26,
           "expression": "update_password",
           "positional_arguments": 2,
@@ -2594,7 +3113,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 479,
+          "line": 559,
           "column": 16,
           "expression": "st.success",
           "positional_arguments": 1,
@@ -2604,7 +3123,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 479,
+          "line": 559,
           "column": 43,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2614,7 +3133,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 482,
+          "line": 562,
           "column": 8,
           "expression": "st.markdown",
           "positional_arguments": 1,
@@ -2624,7 +3143,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 483,
+          "line": 563,
           "column": 13,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -2634,7 +3153,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 484,
+          "line": 564,
           "column": 25,
           "expression": "st.selectbox",
           "positional_arguments": 2,
@@ -2646,7 +3165,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 485,
+          "line": 565,
           "column": 15,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -2658,7 +3177,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 486,
+          "line": 566,
           "column": 33,
           "expression": "current_user.get",
           "positional_arguments": 1,
@@ -2668,7 +3187,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 487,
+          "line": 567,
           "column": 20,
           "expression": "st.warning",
           "positional_arguments": 1,
@@ -2678,7 +3197,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 489,
+          "line": 569,
           "column": 30,
           "expression": "admin_delete_user",
           "positional_arguments": 1,
@@ -2690,7 +3209,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 490,
+          "line": 570,
           "column": 20,
           "expression": "st.success",
           "positional_arguments": 1,
@@ -2700,7 +3219,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 490,
+          "line": 570,
           "column": 47,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2710,7 +3229,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 492,
+          "line": 572,
           "column": 24,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -2720,7 +3239,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 494,
+          "line": 574,
           "column": 4,
           "expression": "st.divider",
           "positional_arguments": 0,
@@ -2730,7 +3249,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 495,
+          "line": 575,
           "column": 4,
           "expression": "st.markdown",
           "positional_arguments": 1,
@@ -2740,7 +3259,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 496,
+          "line": 576,
           "column": 9,
           "expression": "st.form",
           "positional_arguments": 1,
@@ -2750,7 +3269,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 497,
+          "line": 577,
           "column": 22,
           "expression": "st.selectbox",
           "positional_arguments": 2,
@@ -2762,7 +3281,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 498,
+          "line": 578,
           "column": 22,
           "expression": "st.selectbox",
           "positional_arguments": 2,
@@ -2774,7 +3293,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 499,
+          "line": 579,
           "column": 11,
           "expression": "st.form_submit_button",
           "positional_arguments": 1,
@@ -2784,7 +3303,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 500,
+          "line": 580,
           "column": 22,
           "expression": "admin_set_role",
           "positional_arguments": 2,
@@ -2796,7 +3315,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 501,
+          "line": 581,
           "column": 12,
           "expression": "st.success",
           "positional_arguments": 1,
@@ -2806,7 +3325,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 501,
+          "line": 581,
           "column": 39,
           "expression": "st.error",
           "positional_arguments": 1,
@@ -2816,7 +3335,7 @@
         },
         {
           "caller": "auth.render_admin_user_management",
-          "line": 503,
+          "line": 583,
           "column": 16,
           "expression": "st.rerun",
           "positional_arguments": 0,
@@ -61987,7 +62506,7 @@
     {
       "path": "tests/test_audit_regressions.py",
       "module": "tests.test_audit_regressions",
-      "source_sha256_normalized_newlines": "442412015dab105c82f3bda9e92425f542f98097250f6e72ebda06c25e026b8e",
+      "source_sha256_normalized_newlines": "57f606841965bf9fb0f88c044be52a15122d9bb22832267322eaee19c71de5c3",
       "symbols": [
         {
           "id": "tests.test_audit_regressions.BillWorkspaceTests",
@@ -62735,6 +63254,75 @@
           "parameters": "self",
           "returns": null,
           "async_function": false
+        },
+        {
+          "id": "tests.test_audit_regressions.RegistrationPolicyTests",
+          "name": "RegistrationPolicyTests",
+          "owner": "tests.test_audit_regressions",
+          "kind": "class",
+          "line": 897,
+          "end_line": 943,
+          "decorators": [],
+          "bases": [
+            "TestCase"
+          ]
+        },
+        {
+          "id": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "name": "test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "owner": "tests.test_audit_regressions.RegistrationPolicyTests",
+          "kind": "method",
+          "line": 898,
+          "end_line": 924,
+          "decorators": [],
+          "parameters": "self",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "name": "test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "owner": "tests.test_audit_regressions.RegistrationPolicyTests",
+          "kind": "method",
+          "line": 926,
+          "end_line": 943,
+          "decorators": [],
+          "parameters": "self",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "tests.test_audit_regressions.LoginBudgetTests",
+          "name": "LoginBudgetTests",
+          "owner": "tests.test_audit_regressions",
+          "kind": "class",
+          "line": 946,
+          "end_line": 972,
+          "decorators": [],
+          "bases": [
+            "TestCase"
+          ]
+        },
+        {
+          "id": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "name": "test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "owner": "tests.test_audit_regressions.LoginBudgetTests",
+          "kind": "method",
+          "line": 947,
+          "end_line": 972,
+          "decorators": [],
+          "parameters": "self",
+          "returns": null,
+          "async_function": false
+        },
+        {
+          "id": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success.<lambda@959:66>",
+          "name": "<lambda@959:66>",
+          "owner": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "kind": "lambda",
+          "line": 959,
+          "end_line": 959,
+          "parameters": "value, _"
         }
       ],
       "imports": [
@@ -63178,6 +63766,27 @@
           "binding": "readable_bill_markup",
           "target": "bill_research.readable_bill_markup",
           "imported": "bill_research"
+        },
+        {
+          "owner": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 899,
+          "binding": "auth",
+          "target": "auth",
+          "imported": "auth"
+        },
+        {
+          "owner": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 927,
+          "binding": "auth",
+          "target": "auth",
+          "imported": "auth"
+        },
+        {
+          "owner": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 948,
+          "binding": "auth",
+          "target": "auth",
+          "imported": "auth"
         }
       ],
       "calls": [
@@ -71034,6 +71643,794 @@
           "targets": [
             "bill_research.readable_bill_markup"
           ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 901,
+          "column": 13,
+          "expression": "TemporaryDirectory",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 902,
+          "column": 19,
+          "expression": "Path",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 904,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 905,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 905,
+          "column": 49,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 906,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 906,
+          "column": 51,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 907,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 2,
+          "keyword_arguments": [
+            "return_value"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 908,
+          "column": 16,
+          "expression": "patch.dict",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 909,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 2,
+          "keyword_arguments": [
+            "return_value"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 911,
+          "column": 16,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 911,
+          "column": 33,
+          "expression": "auth.register_public_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.register_public_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 912,
+          "column": 16,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 912,
+          "column": 33,
+          "expression": "auth.create_managed_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.create_managed_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 913,
+          "column": 16,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 913,
+          "column": 33,
+          "expression": "(root / 'users.json').exists",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 914,
+          "column": 16,
+          "expression": "self.assertTrue",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 914,
+          "column": 32,
+          "expression": "auth.register_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.register_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 916,
+          "column": 16,
+          "expression": "self.assertTrue",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 916,
+          "column": 32,
+          "expression": "auth.create_managed_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.create_managed_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 917,
+          "column": 21,
+          "expression": "patch.dict",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 918,
+          "column": 20,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 918,
+          "column": 37,
+          "expression": "auth.register_public_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.register_public_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 919,
+          "column": 20,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 919,
+          "column": 37,
+          "expression": "auth.create_managed_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.create_managed_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 920,
+          "column": 21,
+          "expression": "patch.dict",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 921,
+          "column": 20,
+          "expression": "self.assertEqual",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 921,
+          "column": 37,
+          "expression": "auth.registration_mode",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.registration_mode"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 922,
+          "column": 24,
+          "expression": "auth._load_users",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth._load_users"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 923,
+          "column": 16,
+          "expression": "self.assertEqual",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup",
+          "line": 923,
+          "column": 71,
+          "expression": "users.items",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 929,
+          "column": 13,
+          "expression": "TemporaryDirectory",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 930,
+          "column": 19,
+          "expression": "Path",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 932,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 933,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 933,
+          "column": 49,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 934,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 2,
+          "keyword_arguments": [
+            "return_value"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 935,
+          "column": 16,
+          "expression": "patch.dict",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 937,
+          "column": 16,
+          "expression": "self.assertTrue",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 937,
+          "column": 32,
+          "expression": "auth.register_public_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.register_public_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 938,
+          "column": 16,
+          "expression": "self.assertTrue",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 938,
+          "column": 32,
+          "expression": "auth.register_public_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.register_public_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 939,
+          "column": 16,
+          "expression": "self.assertEqual",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 939,
+          "column": 33,
+          "expression": "auth.register_public_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.register_public_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 941,
+          "column": 24,
+          "expression": "auth._load_users",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth._load_users"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 942,
+          "column": 16,
+          "expression": "self.assertEqual",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.RegistrationPolicyTests.test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message",
+          "line": 943,
+          "column": 16,
+          "expression": "self.assertEqual",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 950,
+          "column": 13,
+          "expression": "TemporaryDirectory",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 951,
+          "column": 20,
+          "expression": "Path",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 952,
+          "column": 12,
+          "expression": "users.write_text",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "encoding"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 953,
+          "column": 22,
+          "expression": "type('Session', (dict,), {'__setattr__': dict.__setitem__})",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 953,
+          "column": 22,
+          "expression": "type",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 955,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 956,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 956,
+          "column": 49,
+          "expression": "str",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 957,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 3,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 958,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 2,
+          "keyword_arguments": [
+            "return_value"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 959,
+          "column": 16,
+          "expression": "patch.object",
+          "positional_arguments": 2,
+          "keyword_arguments": [
+            "side_effect"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 961,
+          "column": 16,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 961,
+          "column": 33,
+          "expression": "auth.login_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.login_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 962,
+          "column": 16,
+          "expression": "check.assert_called_once_with",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 963,
+          "column": 25,
+          "expression": "range",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 964,
+          "column": 20,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 964,
+          "column": 37,
+          "expression": "auth.login_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.login_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 966,
+          "column": 16,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 966,
+          "column": 33,
+          "expression": "auth.login_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.login_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 967,
+          "column": 16,
+          "expression": "self.assertEqual",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 969,
+          "column": 16,
+          "expression": "self.assertTrue",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 969,
+          "column": 32,
+          "expression": "auth.login_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.login_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 970,
+          "column": 25,
+          "expression": "range",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 971,
+          "column": 20,
+          "expression": "self.assertFalse",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 971,
+          "column": 37,
+          "expression": "auth.login_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.login_user"
+          ]
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 972,
+          "column": 16,
+          "expression": "self.assertTrue",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tests.test_audit_regressions.LoginBudgetTests.test_shared_budget_limits_guesses_expires_and_clears_on_success",
+          "line": 972,
+          "column": 32,
+          "expression": "auth.login_user",
+          "positional_arguments": 2,
+          "keyword_arguments": [],
+          "resolution": "lexical",
+          "targets": [
+            "auth.login_user"
+          ]
         }
       ]
     },
@@ -74622,7 +76019,7 @@
     {
       "path": "tools/smoke_browser.py",
       "module": "tools.smoke_browser",
-      "source_sha256_normalized_newlines": "3e5d51c552ec8b62d38ac76d4fb64eba5516f9994c1edc331705fde705dc1ee5",
+      "source_sha256_normalized_newlines": "2b2a41eed0e4249e83b0d2766ec0b895bcb703ac438120cda80c12adaf14c6d3",
       "symbols": [
         {
           "id": "tools.smoke_browser.wait_for_health",
@@ -74642,7 +76039,7 @@
           "owner": "tools.smoke_browser",
           "kind": "function",
           "line": 33,
-          "end_line": 100,
+          "end_line": 119,
           "decorators": [],
           "parameters": "",
           "returns": null,
@@ -74890,7 +76287,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 55,
+          "line": 56,
           "column": 32,
           "expression": "os.pathsep.join",
           "positional_arguments": 1,
@@ -74900,7 +76297,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 55,
+          "line": 56,
           "column": 48,
           "expression": "site.getsitepackages",
           "positional_arguments": 0,
@@ -74910,7 +76307,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 58,
+          "line": 59,
           "column": 62,
           "expression": "str",
           "positional_arguments": 1,
@@ -74920,7 +76317,21 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 61,
+          "line": 67,
+          "column": 8,
+          "expression": "subprocess.run",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "cwd",
+            "env",
+            "check"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 68,
           "column": 13,
           "expression": "(base / 'streamlit.log').open",
           "positional_arguments": 1,
@@ -74933,7 +76344,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 62,
+          "line": 69,
           "column": 22,
           "expression": "subprocess.Popen",
           "positional_arguments": 1,
@@ -74948,7 +76359,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 64,
+          "line": 71,
           "column": 16,
           "expression": "wait_for_health",
           "positional_arguments": 2,
@@ -74960,7 +76371,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 65,
+          "line": 72,
           "column": 21,
           "expression": "sync_playwright",
           "positional_arguments": 0,
@@ -74970,7 +76381,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 66,
+          "line": 73,
           "column": 30,
           "expression": "playwright.chromium.launch",
           "positional_arguments": 0,
@@ -74982,7 +76393,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 66,
+          "line": 73,
           "column": 65,
           "expression": "os.environ.get",
           "positional_arguments": 1,
@@ -74992,7 +76403,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 67,
+          "line": 74,
           "column": 27,
           "expression": "browser.new_page",
           "positional_arguments": 0,
@@ -75002,7 +76413,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 68,
+          "line": 75,
           "column": 20,
           "expression": "page.goto",
           "positional_arguments": 1,
@@ -75012,7 +76423,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 69,
+          "line": 76,
           "column": 20,
           "expression": "page.get_by_role('button', name='Browse as Guest', exact=False).click",
           "positional_arguments": 0,
@@ -75024,7 +76435,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 69,
+          "line": 76,
           "column": 20,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75037,7 +76448,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 70,
+          "line": 77,
           "column": 20,
           "expression": "expect(page.get_by_role('heading', name='Your legislative workspace')).to_be_visible",
           "positional_arguments": 0,
@@ -75047,7 +76458,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 70,
+          "line": 77,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75057,7 +76468,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 70,
+          "line": 77,
           "column": 27,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75069,7 +76480,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 71,
+          "line": 78,
           "column": 20,
           "expression": "page.get_by_role('button', name='Historical Coverage').click",
           "positional_arguments": 0,
@@ -75079,7 +76490,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 71,
+          "line": 78,
           "column": 20,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75091,7 +76502,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 72,
+          "line": 79,
           "column": 20,
           "expression": "expect(page.get_by_role('heading', name='Historical Coverage')).to_be_visible",
           "positional_arguments": 0,
@@ -75101,7 +76512,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 72,
+          "line": 79,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75111,7 +76522,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 72,
+          "line": 79,
           "column": 27,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75123,7 +76534,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 73,
+          "line": 80,
           "column": 20,
           "expression": "expect(page.get_by_text('No California or congressional sessions have been discovered yet.')).to_be_visible",
           "positional_arguments": 0,
@@ -75133,7 +76544,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 73,
+          "line": 80,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75143,7 +76554,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 73,
+          "line": 80,
           "column": 27,
           "expression": "page.get_by_text",
           "positional_arguments": 1,
@@ -75153,7 +76564,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 74,
+          "line": 81,
           "column": 20,
           "expression": "page.get_by_text('Dashboard', exact=True).click",
           "positional_arguments": 0,
@@ -75163,7 +76574,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 74,
+          "line": 81,
           "column": 20,
           "expression": "page.get_by_text",
           "positional_arguments": 1,
@@ -75175,7 +76586,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 75,
+          "line": 82,
           "column": 20,
           "expression": "page.get_by_role('button', name='Hearing Calendar', exact=True).click",
           "positional_arguments": 0,
@@ -75185,7 +76596,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 75,
+          "line": 82,
           "column": 20,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75198,7 +76609,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 76,
+          "line": 83,
           "column": 20,
           "expression": "expect(page.get_by_role('heading', name='Hearing Calendar')).to_be_visible",
           "positional_arguments": 0,
@@ -75208,7 +76619,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 76,
+          "line": 83,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75218,7 +76629,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 76,
+          "line": 83,
           "column": 27,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75230,7 +76641,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 77,
+          "line": 84,
           "column": 20,
           "expression": "expect(page.get_by_text('Track a bill to see its published hearings and scheduled events here.')).to_be_visible",
           "positional_arguments": 0,
@@ -75240,7 +76651,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 77,
+          "line": 84,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75250,7 +76661,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 77,
+          "line": 84,
           "column": 27,
           "expression": "page.get_by_text",
           "positional_arguments": 1,
@@ -75260,7 +76671,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 78,
+          "line": 85,
           "column": 20,
           "expression": "page.get_by_text('Advanced Filters', exact=False).click",
           "positional_arguments": 0,
@@ -75270,7 +76681,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 78,
+          "line": 85,
           "column": 20,
           "expression": "page.get_by_text",
           "positional_arguments": 1,
@@ -75282,7 +76693,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 79,
+          "line": 86,
           "column": 20,
           "expression": "page.get_by_role('textbox', name='Custom Status Code').fill",
           "positional_arguments": 1,
@@ -75292,7 +76703,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 79,
+          "line": 86,
           "column": 20,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75304,7 +76715,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 80,
+          "line": 87,
           "column": 20,
           "expression": "page.get_by_role('textbox', name='Custom Status Label').fill",
           "positional_arguments": 1,
@@ -75314,7 +76725,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 80,
+          "line": 87,
           "column": 20,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75326,7 +76737,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 81,
+          "line": 88,
           "column": 20,
           "expression": "page.get_by_role('button', name='Save Status Label').click",
           "positional_arguments": 0,
@@ -75336,7 +76747,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 81,
+          "line": 88,
           "column": 20,
           "expression": "page.get_by_role",
           "positional_arguments": 1,
@@ -75348,7 +76759,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 82,
+          "line": 89,
           "column": 20,
           "expression": "expect(page.get_by_text('Status label saved.', exact=True)).to_be_visible",
           "positional_arguments": 0,
@@ -75360,7 +76771,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 82,
+          "line": 89,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75370,7 +76781,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 82,
+          "line": 89,
           "column": 27,
           "expression": "page.get_by_text",
           "positional_arguments": 1,
@@ -75382,7 +76793,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 83,
+          "line": 90,
           "column": 36,
           "expression": "page.get_by_test_id('stMultiSelect').filter",
           "positional_arguments": 0,
@@ -75394,7 +76805,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 83,
+          "line": 90,
           "column": 36,
           "expression": "page.get_by_test_id",
           "positional_arguments": 1,
@@ -75404,7 +76815,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 84,
+          "line": 91,
           "column": 20,
           "expression": "status_filter.get_by_role('combobox').fill",
           "positional_arguments": 1,
@@ -75414,7 +76825,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 84,
+          "line": 91,
           "column": 20,
           "expression": "status_filter.get_by_role",
           "positional_arguments": 1,
@@ -75424,7 +76835,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 85,
+          "line": 92,
           "column": 20,
           "expression": "expect(page.get_by_text('Needs research [99]', exact=True)).to_be_visible",
           "positional_arguments": 0,
@@ -75434,7 +76845,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 85,
+          "line": 92,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75444,7 +76855,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 85,
+          "line": 92,
           "column": 27,
           "expression": "page.get_by_text",
           "positional_arguments": 1,
@@ -75456,7 +76867,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 86,
+          "line": 93,
           "column": 20,
           "expression": "expect(page.locator('[data-testid=\"stException\"]')).to_have_count",
           "positional_arguments": 1,
@@ -75466,7 +76877,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 86,
+          "line": 93,
           "column": 20,
           "expression": "expect",
           "positional_arguments": 1,
@@ -75476,7 +76887,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 86,
+          "line": 93,
           "column": 27,
           "expression": "page.locator",
           "positional_arguments": 1,
@@ -75486,7 +76897,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 87,
+          "line": 94,
           "column": 20,
           "expression": "print",
           "positional_arguments": 1,
@@ -75496,7 +76907,247 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 88,
+          "line": 95,
+          "column": 33,
+          "expression": "browser.new_page",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 96,
+          "column": 20,
+          "expression": "admin_page.goto",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 97,
+          "column": 30,
+          "expression": "admin_page.get_by_role",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "name",
+            "exact"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 98,
+          "column": 20,
+          "expression": "expect(sign_in).to_be_visible",
+          "positional_arguments": 0,
+          "keyword_arguments": [
+            "timeout"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 98,
+          "column": 20,
+          "expression": "expect",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 99,
+          "column": 20,
+          "expression": "expect(admin_page.get_by_role('button', name='Create Account', exact=True)).to_have_count",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 99,
+          "column": 20,
+          "expression": "expect",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 99,
+          "column": 27,
+          "expression": "admin_page.get_by_role",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "name",
+            "exact"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 100,
+          "column": 20,
+          "expression": "admin_page.get_by_role('textbox', name='Username', exact=True).fill",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 100,
+          "column": 20,
+          "expression": "admin_page.get_by_role",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "name",
+            "exact"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 101,
+          "column": 20,
+          "expression": "admin_page.get_by_label('Password', exact=True).fill",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 101,
+          "column": 20,
+          "expression": "admin_page.get_by_label",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "exact"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 102,
+          "column": 20,
+          "expression": "sign_in.click",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 103,
+          "column": 20,
+          "expression": "expect(admin_page.get_by_role('heading', name='Your legislative workspace')).to_be_visible",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 103,
+          "column": 20,
+          "expression": "expect",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 103,
+          "column": 27,
+          "expression": "admin_page.get_by_role",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "name"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 104,
+          "column": 20,
+          "expression": "admin_page.get_by_text('Admin & Database Tools', exact=False).first.click",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 104,
+          "column": 20,
+          "expression": "admin_page.get_by_text",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "exact"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 105,
+          "column": 20,
+          "expression": "expect(admin_page.get_by_role('button', name='Create user account', exact=True)).to_be_visible",
+          "positional_arguments": 0,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 105,
+          "column": 20,
+          "expression": "expect",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 105,
+          "column": 27,
+          "expression": "admin_page.get_by_role",
+          "positional_arguments": 1,
+          "keyword_arguments": [
+            "name",
+            "exact"
+          ],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 106,
+          "column": 20,
+          "expression": "print",
+          "positional_arguments": 1,
+          "keyword_arguments": [],
+          "resolution": "unresolved",
+          "targets": []
+        },
+        {
+          "caller": "tools.smoke_browser.main",
+          "line": 107,
           "column": 20,
           "expression": "browser.close",
           "positional_arguments": 0,
@@ -75508,7 +77159,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 90,
+          "line": 109,
           "column": 16,
           "expression": "log.seek",
           "positional_arguments": 1,
@@ -75518,7 +77169,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 91,
+          "line": 110,
           "column": 16,
           "expression": "print",
           "positional_arguments": 1,
@@ -75530,7 +77181,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 91,
+          "line": 110,
           "column": 22,
           "expression": "log.read",
           "positional_arguments": 0,
@@ -75540,7 +77191,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 94,
+          "line": 113,
           "column": 19,
           "expression": "process.poll",
           "positional_arguments": 0,
@@ -75550,7 +77201,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 95,
+          "line": 114,
           "column": 20,
           "expression": "process.terminate",
           "positional_arguments": 0,
@@ -75560,7 +77211,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 97,
+          "line": 116,
           "column": 20,
           "expression": "process.wait",
           "positional_arguments": 0,
@@ -75572,7 +77223,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 99,
+          "line": 118,
           "column": 20,
           "expression": "process.kill",
           "positional_arguments": 0,
@@ -75582,7 +77233,7 @@
         },
         {
           "caller": "tools.smoke_browser.main",
-          "line": 100,
+          "line": 119,
           "column": 20,
           "expression": "process.wait",
           "positional_arguments": 0,
@@ -75592,7 +77243,7 @@
         },
         {
           "caller": "tools.smoke_browser",
-          "line": 104,
+          "line": 123,
           "column": 4,
           "expression": "main",
           "positional_arguments": 0,

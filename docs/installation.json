@@ -211,6 +211,16 @@
       "required_for": [
         "isolated_notification_integration_test"
       ]
+    },
+    "TRACKER_REGISTRATION_MODE": {
+      "type": "enum",
+      "values": [
+        "open",
+        "admin",
+        "disabled"
+      ],
+      "default": "open",
+      "invalid_value_behavior": "disabled"
     }
   },
   "integrations": {

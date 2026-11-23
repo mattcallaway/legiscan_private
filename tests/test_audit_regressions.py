@@ -892,3 +892,81 @@ class BillMarkupTests(TestCase):
         )
         with self.assertRaises(ValueError):
             readable_bill_markup("x" * 2_000_001)
+
+
+class RegistrationPolicyTests(TestCase):
+    def test_admin_and_disabled_modes_preserve_trusted_bootstrap_and_block_public_signup(self):
+        import auth
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(auth, "DATA_DIR", directory),
+                patch.object(auth, "USERS_FILE", str(root / "users.json")),
+                patch.object(auth, "USERS_SUBDIR", str(root / "users")),
+                patch.object(auth, "_hash_password", return_value="fixture-hash"),
+                patch.dict("os.environ", {"TRACKER_REGISTRATION_MODE": "admin"}),
+                patch.object(auth, "is_admin", return_value=False) as admin,
+            ):
+                self.assertFalse(auth.register_public_user("visitor", "fixture-password")[0])
+                self.assertFalse(auth.create_managed_user("visitor", "fixture-password")[0])
+                self.assertFalse((root / "users.json").exists())
+                self.assertTrue(auth.register_user("operator", "fixture-password")[0])
+                admin.return_value = True
+                self.assertTrue(auth.create_managed_user("analyst", "fixture-password")[0])
+                with patch.dict("os.environ", {"TRACKER_REGISTRATION_MODE": "disabled"}):
+                    self.assertFalse(auth.register_public_user("visitor", "fixture-password")[0])
+                    self.assertFalse(auth.create_managed_user("manager", "fixture-password")[0])
+                with patch.dict("os.environ", {"TRACKER_REGISTRATION_MODE": "misspelled"}):
+                    self.assertEqual(auth.registration_mode(), "disabled")
+                users = auth._load_users()
+                self.assertEqual({name: user["role"] for name, user in users.items()},
+                                 {"operator": "admin", "analyst": "user"})
+
+    def test_open_mode_retains_legacy_first_admin_and_generic_public_duplicate_message(self):
+        import auth
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(auth, "DATA_DIR", directory),
+                patch.object(auth, "USERS_FILE", str(root / "users.json")),
+                patch.object(auth, "_hash_password", return_value="fixture-hash"),
+                patch.dict("os.environ", {"TRACKER_REGISTRATION_MODE": "open"}),
+            ):
+                self.assertTrue(auth.register_public_user("first", "fixture-password")[0])
+                self.assertTrue(auth.register_public_user("second", "fixture-password")[0])
+                self.assertEqual(auth.register_public_user("second", "fixture-password"),
+                                 (False, "Could not create the account with these details."))
+                users = auth._load_users()
+                self.assertEqual(users["first"]["role"], "admin")
+                self.assertEqual(users["second"]["role"], "user")
+
+
+class LoginBudgetTests(TestCase):
+    def test_shared_budget_limits_guesses_expires_and_clears_on_success(self):
+        import auth
+
+        with TemporaryDirectory() as directory:
+            users = Path(directory) / "users.json"
+            users.write_text('{"researcher":{"password_hash":"fixture","role":"user"}}', encoding="utf-8")
+            session = type("Session", (dict,), {"__setattr__": dict.__setitem__})()
+            with (
+                patch.object(auth, "DATA_DIR", directory),
+                patch.object(auth, "USERS_FILE", str(users)),
+                patch.object(auth.st, "session_state", session),
+                patch.object(auth, "time", return_value=1000) as clock,
+                patch.object(auth, "_check_password", side_effect=lambda value, _: value == "right") as check,
+            ):
+                self.assertFalse(auth.login_user("unknown", "right")[0])
+                check.assert_called_once_with("right", auth._UNKNOWN_PASSWORD_HASH)
+                for _ in range(auth.LOGIN_ATTEMPT_LIMIT):
+                    self.assertFalse(auth.login_user(" RESEARCHER ", "incorrect")[0])
+                checked = check.call_count
+                self.assertFalse(auth.login_user("researcher", "right")[0])
+                self.assertEqual(check.call_count, checked)
+                clock.return_value += auth.LOGIN_WINDOW_SECONDS
+                self.assertTrue(auth.login_user("researcher", "right")[0])
+                for _ in range(auth.LOGIN_ATTEMPT_LIMIT - 1):
+                    self.assertFalse(auth.login_user("researcher", "incorrect")[0])
+                self.assertTrue(auth.login_user("researcher", "right")[0])

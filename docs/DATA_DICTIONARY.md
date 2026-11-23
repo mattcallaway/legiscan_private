@@ -16,3 +16,5 @@ For table-to-code relationships see [technical map](TECHMAP.md). This dictionary
 | Notification | Account owner, tracked bill ID, outbox event ID | PostgreSQL records verified address, activity categories, baselines and delivery state. Resend acceptance is distinct from delivery. |
 
 Migration rules use stable IDs, preserve nullable/unknown records and do not infer absent source evidence. Preserve pre-change backups, validate older fixtures, and document compatibility for every structural change. Phase 1 uses a separate SQLite lock file beside the JSON account store. It carries no account records. Stop all old-version account writers during an upgrade because those processes do not acquire the new lock.
+
+The local login attempt database next to the account store contains temporary counters keyed by a digest of the normalized known account name, plus a shared unknown-account bucket. It contains no passwords and does not determine account permissions.

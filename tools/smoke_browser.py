@@ -42,6 +42,7 @@ def main():
             "DATA_DIR": str(base / "data"),
             "REPO_DIR": str(base / "publication"),
             "API_KEY": "",
+            "TRACKER_REGISTRATION_MODE": "admin",
             "CONGRESS_API_KEY": "",
             "LEGISCAN_BACKGROUND_JOBS": "0",
             "NOTIFICATION_DATABASE_URL": "",
@@ -58,6 +59,12 @@ def main():
             "--server.address", "127.0.0.1", "--server.port", str(port),
             "--server.headless", "true", "--browser.gatherUsageStats", "false",
         ]
+        bootstrap = (
+            "from auth import register_user; "
+            "ok, message = register_user('fixture-admin', 'fixture-smoke-password'); "
+            "assert ok, message"
+        )
+        subprocess.run([executable, "-B", "-c", bootstrap], cwd=ROOT, env=env, check=True)
         with (base / "streamlit.log").open("w+", encoding="utf-8", errors="replace") as log:
             process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
@@ -85,6 +92,18 @@ def main():
                     expect(page.get_by_text("Needs research [99]", exact=True)).to_be_visible()
                     expect(page.locator('[data-testid="stException"]')).to_have_count(0)
                     print("Browser smoke passed: guest dashboard, coverage, calendar, and custom status labels.")
+                    admin_page = browser.new_page()
+                    admin_page.goto(url)
+                    sign_in = admin_page.get_by_role("button", name="Sign In", exact=True)
+                    expect(sign_in).to_be_visible(timeout=20_000)
+                    expect(admin_page.get_by_role("button", name="Create Account", exact=True)).to_have_count(0)
+                    admin_page.get_by_role("textbox", name="Username", exact=True).fill("fixture-admin")
+                    admin_page.get_by_label("Password", exact=True).fill("fixture-smoke-password")
+                    sign_in.click()
+                    expect(admin_page.get_by_role("heading", name="Your legislative workspace")).to_be_visible()
+                    admin_page.get_by_text("Admin & Database Tools", exact=False).first.click()
+                    expect(admin_page.get_by_role("button", name="Create user account", exact=True)).to_be_visible()
+                    print("Browser smoke passed: public signup hidden and administrator enrollment available.")
                     browser.close()
             except Exception:
                 log.seek(0)

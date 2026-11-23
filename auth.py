@@ -2,7 +2,7 @@
 auth.py  —  Multi-user authentication for UFtW Bill Tracker
 ============================================================
 Design principles:
-  - Open self-registration: anyone can create an account.
+  - Browser registration follows the deployment's account enrollment policy.
   - First account created automatically becomes admin.
   - Passwords hashed with bcrypt (never stored in plaintext).
   - New workspaces use opaque IDs; existing accounts keep their legacy paths.
@@ -15,6 +15,8 @@ import logging
 import sqlite3
 from contextlib import closing
 from functools import wraps
+from hashlib import sha256
+from time import time
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -25,6 +27,10 @@ import streamlit as st
 from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
+LOGIN_WINDOW_SECONDS = 300
+LOGIN_ATTEMPT_LIMIT = 8
+# Used for constant-cost comparison when an account does not exist.
+_UNKNOWN_PASSWORD_HASH = "$2b$12$xq.nT1VViaemG0NDAwWJhumWOxioGR/IfPGXJHUVLLNdM9a6PzoEi"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 USERS_FILE   = os.path.join(DATA_DIR, "users.json")
@@ -155,13 +161,33 @@ def logout():
     st.session_state.clear()
 
 
+def registration_mode():
+    """Read the enrollment policy. Invalid values disable browser account creation."""
+    mode = os.environ.get("TRACKER_REGISTRATION_MODE", "open").strip().lower()
+    return mode if mode in {"open", "admin", "disabled"} else "disabled"
+
+
 @_serialize_account_write
 def register_user(username: str, password: str, api_key: str = "") -> tuple[bool, str]:
-    """
-    Create a new user account.
-    Returns (success, message).
-    The first user ever created is automatically admin.
-    """
+    """Provision an account from a trusted local operator process."""
+    return _create_account(username, password, api_key)
+
+
+@_serialize_account_write
+def register_public_user(username, password, api_key=""):
+    if registration_mode() != "open":
+        return False, "Public registration is disabled."
+    return _create_account(username, password, api_key, public=True)
+
+
+@_serialize_account_write
+def create_managed_user(username, password):
+    if registration_mode() == "disabled" or not is_admin():
+        return False, "Administrator account creation is unavailable."
+    return _create_account(username, password, "", managed=True)
+
+
+def _create_account(username, password, api_key, *, public=False, managed=False):
     username = username.strip().lower()
     if not username:
         return False, "Username cannot be empty."
@@ -174,9 +200,11 @@ def register_user(username: str, password: str, api_key: str = "") -> tuple[bool
 
     users = _load_users()
     if username in users:
-        return False, f"Username '{username}' is already taken."
+        if public:
+            return False, "Could not create the account with these details."
+        return False, "That username is already in use."
 
-    role = "admin" if not users else "user"   # first user → admin
+    role = "admin" if not users and not managed else "user"
     users[username] = {
         "password_hash": _hash_password(password),
         "workspace_id":  uuid4().hex,
@@ -189,19 +217,53 @@ def register_user(username: str, password: str, api_key: str = "") -> tuple[bool
 
     get_user_data_dir(username)   # create personal dir
     logger.info(f"auth: new user '{username}' registered (role={role})")
-    return True, f"Account created! You are now logged in as '{username}'."
+    return True, "Account created."
+
+
+def _reserve_login_attempt(identity, now):
+    """Charge an attempt before bcrypt, including competing processes."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with closing(sqlite3.connect(f"{USERS_FILE}.login.sqlite3", timeout=5)) as connection, connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS attempts (identity TEXT PRIMARY KEY, started REAL NOT NULL, count INTEGER NOT NULL)"
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS attempts_started ON attempts(started)")
+        connection.execute("DELETE FROM attempts WHERE started <= ?", (now - LOGIN_WINDOW_SECONDS,))
+        row = connection.execute("SELECT count FROM attempts WHERE identity = ?", (identity,)).fetchone()
+        if row and row[0] >= LOGIN_ATTEMPT_LIMIT:
+            return False
+        connection.execute(
+            """INSERT INTO attempts (identity, started, count) VALUES (?, ?, 1)
+               ON CONFLICT(identity) DO UPDATE SET count = count + 1""",
+            (identity, now),
+        )
+        return True
+
+
+def _clear_login_attempts(identity):
+    with closing(sqlite3.connect(f"{USERS_FILE}.login.sqlite3", timeout=5)) as connection, connection:
+        connection.execute("DELETE FROM attempts WHERE identity = ?", (identity,))
 
 
 def login_user(username: str, password: str) -> tuple[bool, str]:
     """Read one account snapshot and verify credentials without holding the write lock."""
     username = username.strip().lower()
+    invalid = (False, "Invalid username or password.")
+    if not username or len(password.encode("utf-8")) > 72:
+        return invalid
     try:
         users = _load_users()
-    except RuntimeError:
+        u = users.get(username)
+        identity = sha256(username.encode()).hexdigest() if u else "unknown"
+        if not _reserve_login_attempt(identity, time()):
+            return invalid
+        valid = _check_password(password, u.get("password_hash", _UNKNOWN_PASSWORD_HASH) if u else _UNKNOWN_PASSWORD_HASH)
+        if not u or not u.get("password_hash") or not valid:
+            return invalid
+        _clear_login_attempts(identity)
+    except (OSError, RuntimeError, sqlite3.Error):
         return False, "Account storage is unavailable."
-    u = users.get(username)
-    if u is None or len(password.encode("utf-8")) > 72 or not _check_password(password, u.get("password_hash", "")):
-        return False, "Invalid username or password."
 
     st.session_state.auth_user = {
         "username":  username,
@@ -333,10 +395,11 @@ def render_auth_page() -> bool:
         login_as_guest()
         st.rerun()
 
-    st.caption("— or sign in / create an account below —")
-    st.write("")
-
-    tab_login, tab_register = st.tabs(["🔐 Sign In", "📝 Create Account"])
+    allow_registration = registration_mode() == "open"
+    if allow_registration:
+        tab_login, tab_register = st.tabs(["🔐 Sign In", "📝 Create Account"])
+    else:
+        tab_login = st.container()
 
     # ── Login ──────────────────────────────────────────────────────────────
     with tab_login:
@@ -351,6 +414,9 @@ def render_auth_page() -> bool:
                 st.rerun()
             else:
                 st.error(msg)
+
+    if not allow_registration:
+        return False
 
     # ── Register ───────────────────────────────────────────────────────────
     with tab_register:
@@ -367,6 +433,7 @@ def render_auth_page() -> bool:
             rp2 = st.text_input("Confirm password", type="password")
             rk = st.text_input(
                 "LegiScan API Key (optional — you can add this later)",
+                type="password",
                 placeholder="Paste your key, or leave blank",
                 help="Get a free key at legiscan.com. You can also set this later in Account Settings.",
             )
@@ -378,7 +445,7 @@ def render_auth_page() -> bool:
             if rp != rp2:
                 st.error("Passwords do not match.")
             else:
-                ok, msg = register_user(ru, rp, rk)
+                ok, msg = register_public_user(ru, rp, rk)
                 if ok:
                     # Auto-login after registration
                     login_user(ru, rp)
@@ -451,7 +518,20 @@ def render_admin_user_management():
     Renders a user management section to be placed inside the admin tools expander.
     Only meaningful to call if is_admin() is True.
     """
+    if not is_admin():
+        return
     st.subheader("👥 User Management")
+    if registration_mode() != "disabled":
+        with st.form("admin_create_user", clear_on_submit=True):
+            username = st.text_input("New username")
+            password = st.text_input("Temporary password", type="password")
+            if st.form_submit_button("Create user account"):
+                ok, message = create_managed_user(username, password)
+                if ok:
+                    st.toast(message)
+                    st.rerun()
+                else:
+                    st.error(message)
     users_list = admin_list_users()
 
     if not users_list:

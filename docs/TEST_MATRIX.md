@@ -15,3 +15,5 @@ Baseline local Python 3.12 run collected 37 tests, with 36 passing and one skipp
 [Regression tests](../tests/test_audit_regressions.py) · [Notification tests](../tests/test_notifications.py) · [Browser test](../tools/smoke_browser.py) · [CI workflow](../.github/workflows/regression.yml).
 
 Phase 1 adds a child-process writer barrier test, explicit email address policy cases, and safe bill markup coverage. Earlier deployment evidence remains tied to its original commit. The CI workflow uses separate browser and regression jobs on Ubuntu 24.04 for `improved` pushes and pull requests targeting it.
+
+The account-policy checkpoint adds unit coverage for public, admin-only and disabled enrollment, and verifies that existing account provisioning works independently of browser signup. Login tests check a shared attempt budget, unknown-user comparison, expiry and reset after success. Browser coverage now signs in as a fixture administrator, confirms public signup is hidden, and opens the administrator enrollment controls.
