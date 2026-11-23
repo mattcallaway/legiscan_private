@@ -6,6 +6,8 @@ import datetime
 import json
 import logging
 
+from sqlite_schema import add_missing_columns, migrate_schema
+
 logger = logging.getLogger(__name__)
 CORPUS_JOB_TYPES = ("bootstrap_corpus", "incremental_refresh", "keyword_rescan", "current_session_sync", "calendar_refresh")
 QUEUED_LEASE_MINUTES = 5
@@ -24,38 +26,37 @@ class JobManager:
 
     def _init_db(self):
         try:
-            with closing(sqlite3.connect(self.db_path, timeout=10)) as conn, conn:
-                conn.execute("BEGIN IMMEDIATE")
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS system_jobs (
-                        job_id TEXT PRIMARY KEY,
-                        job_type TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        start_time TEXT NOT NULL,
-                        end_time TEXT,
-                        duration_sec REAL,
-                        jurisdiction TEXT,
-                        session_scope TEXT,
-                        records_processed INTEGER DEFAULT 0,
-                        new_items INTEGER DEFAULT 0,
-                        updated_items INTEGER DEFAULT 0,
-                        api_calls INTEGER DEFAULT 0,
-                        error_summary TEXT,
-                        initiated_by TEXT
-                    )
-                """)
-                columns = {row[1] for row in conn.execute("PRAGMA table_info(system_jobs)")}
-                for column, field_type in (
-                    ("queue_payload", "TEXT"), ("queued_at", "TEXT"),
-                    ("heartbeat_at", "TEXT"), ("attempt", "INTEGER NOT NULL DEFAULT 1"),
-                    ("retry_of", "TEXT"), ("progress_message", "TEXT"), ("progress_fraction", "REAL"),
-                ):
-                    if column not in columns:
-                        conn.execute(f"ALTER TABLE system_jobs ADD COLUMN {column} {field_type}")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_system_jobs_queue ON system_jobs(status, queued_at)")
-                conn.commit()
-        except Exception as e:
-            raise RuntimeError("Could not initialize sync job storage.") from e
+            with closing(sqlite3.connect(self.db_path, timeout=10)) as conn:
+                migrate_schema(conn, "job", (self._migrate_schema_v1,))
+        except sqlite3.Error as error:
+            raise RuntimeError("Could not initialize sync job storage.") from error
+
+    @staticmethod
+    def _migrate_schema_v1(conn):
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_jobs (
+            job_id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT,
+            duration_sec REAL,
+            jurisdiction TEXT,
+            session_scope TEXT,
+            records_processed INTEGER DEFAULT 0,
+            new_items INTEGER DEFAULT 0,
+            updated_items INTEGER DEFAULT 0,
+            api_calls INTEGER DEFAULT 0,
+            error_summary TEXT,
+            initiated_by TEXT
+        )
+        """)
+        add_missing_columns(conn, "system_jobs", (
+            ("queue_payload", "TEXT"), ("queued_at", "TEXT"),
+            ("heartbeat_at", "TEXT"), ("attempt", "INTEGER NOT NULL DEFAULT 1"),
+            ("retry_of", "TEXT"), ("progress_message", "TEXT"), ("progress_fraction", "REAL"),
+        ))
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_system_jobs_queue ON system_jobs(status, queued_at)")
 
     @contextmanager
     def worker_ownership(self):

@@ -59,13 +59,13 @@ from typing import Callable, Optional
 
 import requests
 from request_budget import allow_request
+from sqlite_schema import add_missing_columns, apply_ddl, migrate_schema
 from hearing_calendar import normalize_calendar, source_link
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-SCHEMA_VERSION = 1
 BASE_URL        = "https://api.legiscan.com/"
 
 CHAMBER_MAP = {"A": "Assembly", "S": "Senate", "H": "House"}
@@ -351,19 +351,7 @@ class CorpusManager:
 
     @_corpus_operation
     def _init_db(self) -> None:
-        conn = self._get_conn()
-        version = self._schema_version(conn)
-        if version == SCHEMA_VERSION:
-            return
-
-        self._enable_wal(conn)
-        conn.execute("BEGIN IMMEDIATE")
-        with conn:
-            # Another process may have finished while this connection waited to write.
-            if self._schema_version(conn) == 0:
-                self._migrate_schema_v1(conn)
-                conn.execute("PRAGMA user_version = 1")
-        logger.info("Corpus schema ready, version %s", SCHEMA_VERSION)
+        migrate_schema(self._get_conn(), "corpus", (self._migrate_schema_v1,), prepare=self._enable_wal)
 
     @staticmethod
     def _enable_wal(conn):
@@ -380,24 +368,9 @@ class CorpusManager:
                 time.sleep(0.05)
 
     @staticmethod
-    def _schema_version(conn):
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, SCHEMA_VERSION):
-            raise ValueError(f"Unsupported corpus schema version {version}. This release supports 0 and {SCHEMA_VERSION}.")
-        return version
-
-    @staticmethod
     def _migrate_schema_v1(conn):
-        # These fixed statements contain no embedded semicolons. Execute each within
-        # the caller's transaction instead of using executescript's implicit commit.
-        for statement in _SCHEMA_V1.split(";"):
-            if statement.strip():
-                conn.execute(statement)
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(bills)")}
-        if "latest_doc_id" not in columns:
-            conn.execute("ALTER TABLE bills ADD COLUMN latest_doc_id INTEGER")
-        if "latest_doc_url" not in columns:
-            conn.execute("ALTER TABLE bills ADD COLUMN latest_doc_url TEXT")
+        apply_ddl(conn, _SCHEMA_V1)
+        add_missing_columns(conn, "bills", (("latest_doc_id", "INTEGER"), ("latest_doc_url", "TEXT")))
         # Old releases look for this text value in sync_meta.
         conn.execute("INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('schema_version', '1')")
 

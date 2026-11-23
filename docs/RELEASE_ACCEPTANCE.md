@@ -29,3 +29,7 @@ The corpus connection change passed 45 local tests, including isolated PostgreSQ
 ## Corpus migration checkpoint
 
 Tests cover a pre-document-column fixture with historical session timestamps and individual votes, a pre-upgrade backup, four concurrent fresh starts, rollback after an interrupted migration, safe restart, and refusal of an unknown newer version. All 49 local regressions passed with isolated PostgreSQL, and the browser smoke test passed. The versioned corpus migration has not been run against live VPS data.
+
+## Staff and job migration checkpoint
+
+All 54 local regressions passed with isolated PostgreSQL, and the browser smoke test passed. The upgrade fixtures preserve staff and identity IDs, restore a pre-versioned roster snapshot, and keep job history and pending payloads claimable after restart. The preceding corpus migration passed both GitHub Actions jobs. Production has not been upgraded.

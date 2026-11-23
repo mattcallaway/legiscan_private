@@ -1123,3 +1123,138 @@ class CorpusMigrationTests(TestCase):
                 self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
                 self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "delete")
                 self.assertEqual(conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0], 0)
+
+
+class StaffAndJobMigrationTests(TestCase):
+    def test_legacy_staff_rows_keep_ids_and_snapshot_can_still_be_restored(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "staff.db"
+            snapshot = {
+                "legislators": [{"legislator_id": "member-41", "name": "Alex Rivera", "chamber": "Assembly",
+                                 "state": "CA", "normalized_name": "alex rivera"}],
+                "legislator_staff": [{"staff_id": "staff-53", "legislator_id": "member-41",
+                                      "name": "Sam Lee", "role": "Chief of Staff"}],
+                "legislator_issue_assignments": [],
+                "committee_staff": [{"id": "committee-9", "committee_name": "Rules", "chamber": "Assembly",
+                                     "role": "Consultant", "staff_name": "Jordan Chen"}],
+            }
+            with closing(sqlite3.connect(path)) as legacy, legacy:
+                legacy.executescript("""
+                    CREATE TABLE legislators (
+                        legislator_id TEXT PRIMARY KEY, name TEXT NOT NULL, chamber TEXT, state TEXT,
+                        district TEXT, party TEXT, normalized_name TEXT
+                    );
+                    INSERT INTO legislators (legislator_id, name, chamber, state, normalized_name)
+                    VALUES ('member-41', 'Alex Rivera', 'Assembly', 'CA', 'alex rivera');
+                    CREATE TABLE legislator_staff (
+                        staff_id TEXT PRIMARY KEY, legislator_id TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL,
+                        email TEXT, office_type TEXT, source_tab TEXT,
+                        FOREIGN KEY(legislator_id) REFERENCES legislators(legislator_id)
+                    );
+                    INSERT INTO legislator_staff (staff_id, legislator_id, name, role)
+                    VALUES ('staff-53', 'member-41', 'Taylor Singh', 'Chief of Staff');
+                    CREATE TABLE committee_staff (
+                        id TEXT PRIMARY KEY, committee_name TEXT NOT NULL, chamber TEXT, role TEXT NOT NULL, staff_name TEXT NOT NULL
+                    );
+                    INSERT INTO committee_staff VALUES ('committee-9', 'Rules', 'Assembly', 'Consultant', 'Jordan Chen');
+                    CREATE TABLE office_staff_identity (
+                        legislator_id TEXT NOT NULL, full_name TEXT NOT NULL, role TEXT NOT NULL, staff_id TEXT NOT NULL,
+                        PRIMARY KEY(legislator_id, full_name, role)
+                    );
+                    INSERT INTO office_staff_identity VALUES ('member-41', 'sam lee', 'Chief of Staff', 'staff-53');
+                    CREATE TABLE staff_roster_snapshots (
+                        snapshot_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, reason TEXT NOT NULL, roster_json TEXT NOT NULL
+                    );
+                """)
+                legacy.execute("INSERT INTO staff_roster_snapshots VALUES (?, ?, ?, ?)",
+                               ("legacy-snapshot", "2025-01-01", "Before roster import", json.dumps(snapshot)))
+            manager = StaffManager(str(path))
+            self.assertEqual(manager.get_all_legislators().iloc[0]["legislator_id"], "member-41")
+            self.assertEqual(manager.get_legislator_staff("member-41")[0]["staff_id"], "staff-53")
+            self.assertEqual(manager.get_roster_snapshots()[0]["snapshot_id"], "legacy-snapshot")
+            revision, _ = manager.preview_roster_restore("legacy-snapshot")
+            manager.restore_roster_snapshot("legacy-snapshot", revision)
+            restored = manager.get_legislator_staff("member-41")[0]
+            self.assertEqual((restored["staff_id"], restored["name"]), ("staff-53", "Sam Lee"))
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(conn.execute("SELECT state FROM committee_staff").fetchone()[0], "CA")
+                self.assertEqual(conn.execute("SELECT staff_id FROM office_staff_identity").fetchone()[0], "staff-53")
+            with patch.object(StaffManager, "_migrate_schema_v1", side_effect=AssertionError("already migrated")):
+                self.assertEqual(StaffManager(str(path)).get_roster_snapshots()[1]["snapshot_id"], "legacy-snapshot")
+
+    def test_unversioned_queue_retains_history_payload_and_claims_after_restart(self):
+        from job_manager import JobManager
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            manager = JobManager(str(path))
+            prior = manager.start_job("incremental_refresh", "CA", "9")
+            manager.finish_job(prior, "SUCCESS", records_processed=27)
+            payload = {"states": ["CA", "US"]}
+            pending = manager.enqueue_job("keyword_rescan", "CA", "all", payload, initiated_by="fixture-admin")
+            with closing(sqlite3.connect(path)) as conn, conn:
+                conn.execute("PRAGMA user_version = 0")
+            upgraded = JobManager(str(path))
+            self.assertEqual(upgraded.get_job(prior)["records_processed"], 27)
+            self.assertEqual(upgraded.get_job(pending)["initiated_by"], "fixture-admin")
+            self.assertEqual(upgraded.get_job(pending)["status"], "QUEUED")
+            with patch.object(JobManager, "_migrate_schema_v1", side_effect=AssertionError("already migrated")):
+                worker = JobManager(str(path))
+                claimed = worker.claim_next_job()
+            self.assertEqual((claimed["job_id"], claimed["payload"], claimed["attempt"]), (pending, payload, 1))
+            self.assertIsNone(worker.claim_next_job())
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_legacy_job_table_before_queue_preserves_existing_job_and_gains_queue(self):
+        from job_manager import JobManager
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            with closing(sqlite3.connect(path)) as conn:
+                conn.executescript("""
+                    CREATE TABLE system_jobs (
+                        job_id TEXT PRIMARY KEY, job_type TEXT NOT NULL, status TEXT NOT NULL,
+                        start_time TEXT NOT NULL, end_time TEXT, duration_sec REAL, jurisdiction TEXT,
+                        session_scope TEXT, records_processed INTEGER DEFAULT 0, new_items INTEGER DEFAULT 0,
+                        updated_items INTEGER DEFAULT 0, api_calls INTEGER DEFAULT 0,
+                        error_summary TEXT, initiated_by TEXT
+                    );
+                    INSERT INTO system_jobs (job_id, job_type, status, start_time, records_processed)
+                    VALUES ('legacy', 'keyword_rescan', 'SUCCESS', '2025-01-01', 19);
+                """)
+            manager = JobManager(str(path))
+            self.assertEqual(manager.get_job("legacy")["records_processed"], 19)
+            self.assertIsNone(manager.get_job("legacy")["queue_payload"])
+            identifier = manager.enqueue_job("keyword_rescan", "US", "all", {"states": ["US"]})
+            self.assertEqual(manager.claim_next_job()["job_id"], identifier)
+
+    def test_refuses_newer_staff_and_job_databases(self):
+        from job_manager import JobManager
+
+        for label, factory in (("staff", StaffManager), ("job", JobManager)):
+            with self.subTest(store=label), TemporaryDirectory() as directory:
+                path = Path(directory) / "future.db"
+                with closing(sqlite3.connect(path)) as conn:
+                    conn.execute("PRAGMA user_version = 2")
+                with self.assertRaisesRegex(ValueError, f"Unsupported {label} schema version 2"):
+                    factory(str(path))
+                with closing(sqlite3.connect(path)) as conn:
+                    self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0], 0)
+
+    def test_staff_migration_failure_does_not_leave_partial_schema(self):
+        def fail(conn):
+            conn.execute("CREATE TABLE unfinished (name TEXT)")
+            raise sqlite3.OperationalError("staff fixture failure")
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "staff.db"
+            with patch.object(StaffManager, "_migrate_schema_v1", side_effect=fail):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "staff fixture failure"):
+                    StaffManager(str(path))
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 0)
+                self.assertIsNone(conn.execute("SELECT 1 FROM sqlite_master WHERE name='unfinished'").fetchone())
+            self.assertEqual(StaffManager(str(path)).get_roster_snapshots(), [])

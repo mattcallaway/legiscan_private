@@ -20,3 +20,5 @@ Migration rules use stable IDs, preserve nullable/unknown records and do not inf
 The local login attempt database next to the account store contains temporary counters keyed by a digest of the normalized known account name, plus a shared unknown-account bucket. It contains no passwords and does not determine account permissions.
 
 SQLite user_version 0 represents an unversioned bill corpus, including installations whose sync_meta schema_version text is already 1. Version 1 records completion of the baseline corpus schema transaction. A normal restart reads the version and skips schema setup. This version applies only to bills.db. Staff, job, workspace, and PostgreSQL schemas retain their existing conventions.
+
+Staff and job databases now each own an independent SQLite user_version. Version 1 means the existing roster and queue layouts were adopted. Staff IDs, identity maps and snapshot payloads remain unchanged during migration. The job migration retains existing queue payloads, attempt state and job IDs and adds missing queue fields to older layouts. Account/workspace SQLite and PostgreSQL still follow their existing initialization paths.

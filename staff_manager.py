@@ -12,9 +12,11 @@ from hashlib import sha256
 from collections import Counter
 from typing import List, Dict, Any, Tuple
 
+from sqlite_schema import add_missing_columns, apply_ddl, migrate_schema
+
 logger = logging.getLogger(__name__)
 
-STAFF_SCHEMA = """
+_STAFF_SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS legislators (
     legislator_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -217,28 +219,23 @@ class StaffManager:
         return sqlite3.connect(self.db_path)
 
     def _init_db(self):
-        try:
-            with closing(self._get_conn()) as conn, conn:
-                conn.executescript(STAFF_SCHEMA)
-                committee_columns = {row[1] for row in conn.execute("PRAGMA table_info(committee_staff)")}
-                if "state" not in committee_columns:
-                    conn.execute("ALTER TABLE committee_staff ADD COLUMN state TEXT NOT NULL DEFAULT 'CA'")
+        with closing(self._get_conn()) as conn:
+            migrate_schema(conn, "staff", (self._migrate_schema_v1,))
 
-                # Ensure backwards schema compatibility for new fields
-                for c in ["legislators_matched", "staff_created", "issues_created", "committees_created"]:
-                    try:
-                        conn.execute(f"ALTER TABLE staff_import_jobs ADD COLUMN {c} INTEGER DEFAULT 0")
-                    except sqlite3.OperationalError:
-                        pass
-                
-                # Canonical Migration
-                for c in ["normalized_full_name", "normalized_display_name", "normalized_last_name", "district_code", "district_number", "canonical_legislator_key"]:
-                    try:
-                        conn.execute(f"ALTER TABLE legislators ADD COLUMN {c} TEXT")
-                    except sqlite3.OperationalError:
-                        pass
-        except Exception as e:
-            logger.error(f"Failed to initialize staff db: {e}")
+    @staticmethod
+    def _migrate_schema_v1(conn):
+        apply_ddl(conn, _STAFF_SCHEMA_V1)
+        add_missing_columns(conn, "committee_staff", (("state", "TEXT NOT NULL DEFAULT 'CA'"),))
+        add_missing_columns(conn, "staff_import_jobs", (
+            (name, "INTEGER DEFAULT 0")
+            for name in ("legislators_matched", "staff_created", "issues_created", "committees_created")
+        ))
+        add_missing_columns(conn, "legislators", (
+            (name, "TEXT") for name in (
+                "normalized_full_name", "normalized_display_name", "normalized_last_name",
+                "district_code", "district_number", "canonical_legislator_key",
+            )
+        ))
 
     _ROSTER_TABLES = ("legislators", "legislator_staff", "legislator_issue_assignments", "committee_staff")
 
