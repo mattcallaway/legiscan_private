@@ -8,7 +8,7 @@ import pandas as pd
 
 import streamlit as st
 
-from hearing_calendar import export_calendar
+from hearing_calendar import calendar_refresh_failure_summary, export_calendar
 from job_runner import run_calendar_refresh
 from legiscanner import US_STATES
 from notifications import ACTIVITY_LABELS, Notifications, account_owner, enabled_config
@@ -144,10 +144,14 @@ def render_hearing_calendar(corpus, tracked_bills, job_manager, username, *,
     st.button("Reload calendar", key="reload_hearing_calendar")
     refresh_notice = st.session_state.pop(f"hearing_refresh_notice:{username}", None)
     if refresh_notice is not None:
-        if refresh_notice["errors"]:
-            st.warning(f'{refresh_notice["errors"]} source requests failed. Existing snapshots were retained.')
-        st.success(f'{refresh_notice["new"] + refresh_notice["updated"]} snapshots updated. '
-                   f'{refresh_notice["unavailable"]} bills supplied no usable schedule.')
+        failure = calendar_refresh_failure_summary(refresh_notice)
+        if failure:
+            st.warning(f"{failure} Existing snapshots were kept for failed or deferred checks.")
+        saved = refresh_notice["new"] + refresh_notice["updated"]
+        if saved:
+            st.success(f"Calendar snapshots saved for {saved:,} tracked {'bill' if saved == 1 else 'bills'}.")
+        if refresh_notice["unavailable"]:
+            st.info(f'{refresh_notice["unavailable"]:,} bills supplied no usable schedule.')
     if not corpus:
         st.info("The calendar database is unavailable.")
     elif not tracked_bills:
@@ -192,8 +196,10 @@ def render_hearing_calendar(corpus, tracked_bills, job_manager, username, *,
                 st.download_button("Download calendar (.ics)", export_calendar(visible),
                                    "tracked-bill-events.ics", "text/calendar")
                 st.caption("Calendar exports use all-day markers. Any reported time is included in the description because the feed does not specify a time zone.")
-        else:
+        elif calendars:
             st.info("No upcoming events appear in the available snapshots for this date range.")
+        else:
+            st.info("No source calendars are available yet for your tracked bills.")
         st.caption("Check the source bill for schedule changes. When an event drops out of a source update, it leaves this calendar without a cancellation label.")
 
         if job_manager and (is_admin or has_personal_key):

@@ -49,6 +49,20 @@ def normalize_calendar(bill_id, entries):
     return sorted(events.values(), key=lambda event: (event["date"], event["time"], event["event_id"]))
 
 
+def calendar_refresh_failure_summary(stats):
+    messages = []
+    errors = stats["errors"]
+    if errors:
+        reasons = ", ".join(f"{reason} ({count:,})" for reason, count in stats["failure_reasons"].items())
+        checks = "check" if errors == 1 else "checks"
+        messages.append(f"{errors:,} calendar {checks} failed. {reasons}.")
+    deferred = stats["deferred"]
+    if deferred:
+        checks = "check" if deferred == 1 else "checks"
+        messages.append(f"{deferred:,} calendar {checks} deferred by the per-job LegiScan request limit.")
+    return " ".join(messages)
+
+
 def _escape(text):
     return (str(text).replace("\r\n", "\n").replace("\r", "\n").replace("\\", "\\\\")
             .replace("\n", "\\n").replace(";", "\\;").replace(",", "\\,"))

@@ -3,6 +3,7 @@ import sqlite3
 from pathlib import Path
 
 from civic_index import rebuild_civic_index
+from hearing_calendar import calendar_refresh_failure_summary
 from threading import Event, Thread
 from typing import Optional, Callable
 from job_manager import JobConflict, JobManager
@@ -163,13 +164,12 @@ def run_calendar_refresh(corpus, bills, job_manager, progress_cb=None, *, job_id
         raise ValueError("Select up to 25 tracked bills for calendar refresh.")
     job_id = job_id or job_manager.start_job("calendar_refresh", "", "WATCHLIST", initiated_by=initiated_by)
     try:
-        with job_request_budget() as budget:
+        with job_request_budget():
             stats = corpus.refresh_tracked_calendars(bills, progress_cb)
-        message = ("LegiScan request budget reached" if budget.exhausted else
-                   f'{stats["errors"]} calendar requests failed' if stats["errors"] else
-                   f'{stats["unavailable"]} bills had no usable source calendar' if stats["unavailable"] else "")
+        failure = calendar_refresh_failure_summary(stats)
+        message = failure or (f'{stats["unavailable"]} bills had no usable source calendar' if stats["unavailable"] else "")
         job_manager.finish_job(
-            job_id, status="FAILED" if stats["errors"] else "SUCCESS", error_summary=message,
+            job_id, status="FAILED" if failure else "SUCCESS", error_summary=message,
             new_items=stats["new"], updated_items=stats["updated"], api_calls=stats["api_calls"],
         )
         return stats

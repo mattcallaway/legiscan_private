@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 BASE_URL        = "https://api.legiscan.com/"
+_REQUEST_BUDGET_REACHED = "Per-job LegiScan request budget reached"
 
 CHAMBER_MAP = {"A": "Assembly", "S": "Senate", "H": "House"}
 
@@ -412,7 +413,7 @@ class CorpusManager:
     def _api_get(self, params: dict, timeout: Optional[int] = None) -> dict:
         """Make one LegiScan API request (JSON response)."""
         if not allow_request():
-            return {"status": "ERROR", "error": "Per-job LegiScan request budget reached"}
+            return {"status": "ERROR", "error": _REQUEST_BUDGET_REACHED, "request_failure": _REQUEST_BUDGET_REACHED}
         p = dict(params)
         p["key"] = self.api_key
         self._api_calls_run += 1
@@ -420,11 +421,26 @@ class CorpusManager:
             r = requests.get(BASE_URL, params=p, timeout=timeout or 30)
             r.raise_for_status()
             time.sleep(self.rate_limit_s)
-            return r.json()
+            payload = r.json()
+            if isinstance(payload, dict):
+                # Only local diagnostics may populate this field.
+                payload.pop("request_failure", None)
+                return payload
+            failure = "LegiScan returned an invalid response"
+        except requests.exceptions.Timeout:
+            failure = "LegiScan request timed out"
+        except requests.exceptions.HTTPError as exc:
+            failure = "LegiScan HTTP request failed"
+            if exc.response is not None:
+                failure = f"LegiScan returned HTTP {exc.response.status_code}"
+        except requests.exceptions.ConnectionError:
+            failure = "Could not connect to LegiScan"
+        except ValueError:
+            failure = "LegiScan returned an invalid response"
         except Exception as exc:
-            message = f"{type(exc).__name__} while calling {params.get('op', '?')}"
-            logger.error("LegiScan API error: %s", message)
-            return {"status": "ERROR", "error": message}
+            failure = f"LegiScan request failed ({type(exc).__name__})"
+        logger.error("LegiScan API error: %s while calling %s", failure, params.get("op", "?"))
+        return {"status": "ERROR", "error": failure, "request_failure": failure}
 
     def _meta_get(self, key: str) -> Optional[str]:
         row = self._get_conn().execute(
@@ -1138,7 +1154,8 @@ class CorpusManager:
     @_corpus_operation
     def refresh_tracked_calendars(self, bills, progress_cb=None):
         """Read event feeds for an explicit batch while retaining older snapshots on errors."""
-        stats = {"new": 0, "updated": 0, "errors": 0, "unavailable": 0, "unchanged": 0}
+        stats = {"new": 0, "updated": 0, "errors": 0, "unavailable": 0, "unchanged": 0,
+                 "deferred": 0, "failure_reasons": {}}
         start_calls = self._api_calls_run
         connection = self._get_conn()
         for index, bill in enumerate(bills, 1):
@@ -1149,28 +1166,34 @@ class CorpusManager:
             if not self.calendar_refresh_candidates({str(bill_id): bill}, limit=1):
                 stats["unchanged"] += 1
                 continue
-            details = self.get_bill(int(bill_id))
-            with connection:
-                connection.execute(
-                    """INSERT INTO bill_calendar_attempts VALUES (?, ?)
-                       ON CONFLICT(bill_id) DO UPDATE SET checked_at=excluded.checked_at""",
-                    (bill_id, datetime.now(timezone.utc).isoformat()),
-                )
-            if not details or str(details.get("bill_id")) != str(bill_id):
+            calls_before = self._api_calls_run
+            details, failure = self._fetch_bill(int(bill_id))
+            if failure == _REQUEST_BUDGET_REACHED:
+                stats["deferred"] = len(bills) - index + 1
+                break
+            if failure:
                 stats["errors"] += 1
-                continue
-            metadata = {
-                **bill, "title": details.get("title") or bill.get("title"),
-                "bill_number": details.get("bill_number") or bill.get("bill_number"),
-            }
+                reasons = stats["failure_reasons"]
+                reasons[failure] = reasons.get(failure, 0) + 1
             with connection:
-                if self._save_bill_calendar(
-                    connection, metadata, details.get("calendar"),
-                    source_link(details.get("state_link"), details.get("url"), bill.get("url")),
-                ):
-                    stats["updated" if previous else "new"] += 1
-                else:
-                    stats["unavailable"] += 1
+                if self._api_calls_run > calls_before:
+                    connection.execute(
+                        """INSERT INTO bill_calendar_attempts VALUES (?, ?)
+                           ON CONFLICT(bill_id) DO UPDATE SET checked_at=excluded.checked_at""",
+                        (bill_id, datetime.now(timezone.utc).isoformat()),
+                    )
+                if details:
+                    metadata = {
+                        **bill, "title": details.get("title") or bill.get("title"),
+                        "bill_number": details.get("bill_number") or bill.get("bill_number"),
+                    }
+                    if self._save_bill_calendar(
+                        connection, metadata, details.get("calendar"),
+                        source_link(details.get("state_link"), details.get("url"), bill.get("url")),
+                    ):
+                        stats["updated" if previous else "new"] += 1
+                    else:
+                        stats["unavailable"] += 1
             if progress_cb:
                 progress_cb(index / len(bills), f"Checked {index} of {len(bills)} calendar feeds")
         stats["api_calls"] = self._api_calls_run - start_calls
@@ -1863,11 +1886,30 @@ class CorpusManager:
 
     def get_bill(self, bill_id: int) -> Optional[dict]:
         """Fetch detailed bill JSON from LegiScan API by bill_id."""
+        details, _ = self._fetch_bill(bill_id)
+        return details
+
+    def _fetch_bill(self, bill_id):
+        if not self.api_key.strip():
+            return None, "No LegiScan API key is configured"
         logger.info(f"API: get_bill(bill_id={bill_id})")
         res = self._api_get({"op": "getBill", "id": bill_id})
-        if res.get("status") == "OK" and "bill" in res:
-            return res["bill"]
-        return None
+        if res.get("status") == "OK":
+            bill = res.get("bill")
+            if isinstance(bill, dict) and str(bill.get("bill_id")) == str(bill_id):
+                return bill, None
+            return None, "LegiScan did not return the requested bill"
+        if failure := res.get("request_failure"):
+            return None, failure
+        alert = res.get("alert")
+        message = str(alert.get("message", "")).casefold() if isinstance(alert, dict) else ""
+        if "limit" in message or "quota" in message:
+            return None, "LegiScan reported a request limit"
+        if "api key" in message or "apikey" in message:
+            return None, "LegiScan reported an API key problem"
+        if "bill" in message and any(term in message for term in ("not found", "invalid", "unknown")):
+            return None, "LegiScan could not find the requested bill"
+        return None, "LegiScan rejected the bill request"
 
     def get_bill_versions(self, bill_id: int) -> list[dict]:
         details = self.get_bill(bill_id) or {}

@@ -811,7 +811,7 @@ class HearingCalendarTests(TestCase):
     def test_valid_empty_feed_clears_snapshot_while_unavailable_feed_preserves_it(self):
         from corpus_manager import _flatten_bill_to_row
         with TemporaryDirectory() as directory:
-            corpus = CorpusManager(str(Path(directory, "bills.db")), "")
+            corpus = CorpusManager(str(Path(directory, "bills.db")), "fixture-key", rate_limit_s=0)
             try:
                 metadata = {"bill_id": "10", "jurisdiction": "CA", "bill_number": "AB10", "title": "Water"}
                 details = {"bill_id": 10, "bill_number": "AB10", "title": "Water", "calendar": [
@@ -823,19 +823,64 @@ class HearingCalendarTests(TestCase):
                     conn.execute("UPDATE bill_calendar_snapshots SET fetched_at='2000-01-01'")
                 self.assertEqual(len(corpus.get_bill_calendars(["10"])["10"]["events"]), 1)
                 self.assertEqual(corpus.calendar_refresh_candidates({"10": metadata}), [metadata])
-                with patch.object(corpus, "get_bill", return_value={"bill_id": 10}):
+                with patch("corpus_manager.requests.get") as request:
+                    request.return_value.json.return_value = {"status": "OK", "bill": {"bill_id": 10}}
                     result = corpus.refresh_tracked_calendars([metadata])
                 self.assertEqual(result["unavailable"], 1)
                 self.assertEqual(len(corpus.get_bill_calendars(["10"])["10"]["events"]), 1)
                 self.assertEqual(corpus.calendar_refresh_candidates({"10": metadata}), [])
                 with corpus._get_conn() as conn:
                     conn.execute("UPDATE bill_calendar_attempts SET checked_at='2000-01-01'")
-                with patch.object(corpus, "get_bill", return_value={"bill_id": 10, "calendar": []}):
+                with patch("corpus_manager.requests.get") as request:
+                    request.return_value.json.return_value = {"status": "OK", "bill": {"bill_id": 10, "calendar": []}}
                     result = corpus.refresh_tracked_calendars([metadata])
                 self.assertEqual(result["updated"], 1)
                 self.assertEqual(corpus.get_bill_calendars(["10"])["10"]["events"], [])
             finally:
                 corpus.close()
+
+    def test_calendar_failures_reach_the_job_log_without_upstream_request_details(self):
+        from job_manager import JobManager
+        from job_runner import run_calendar_refresh
+        from requests.exceptions import Timeout
+
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory, "bills.db")), "fixture-key", rate_limit_s=0)
+            jobs = JobManager(str(Path(directory, "jobs.db")))
+            bills = [{"bill_id": "10"}, {"bill_id": "20"}, {"bill_id": "30"}]
+            response = Mock()
+            response.json.return_value = {
+                "status": "ERROR", "alert": {"message": "Invalid API key fixture-key"},
+                "request_failure": "must never be echoed",
+            }
+            with (patch.dict("os.environ", {"LEGISCAN_JOB_REQUEST_LIMIT": "2"}),
+                  patch("corpus_manager.requests.get", side_effect=[response, Timeout("fixture-key")]) as request,
+                  self.assertLogs("corpus_manager", level="ERROR") as logged):
+                job_id = jobs.start_job("calendar_refresh", "", "WATCHLIST")
+                stats = run_calendar_refresh(corpus, bills, jobs, job_id=job_id)
+
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(stats["errors"], 2)
+            self.assertEqual(stats["deferred"], 1)
+            self.assertEqual(stats["unavailable"], 0)
+            self.assertEqual(corpus.calendar_refresh_candidates({bill["bill_id"]: bill for bill in bills}), bills[2:])
+            job = jobs.get_job(job_id)
+            self.assertEqual(job["status"], "FAILED")
+            self.assertIn("LegiScan reported an API key problem", job["error_summary"])
+            self.assertIn("LegiScan request timed out", job["error_summary"])
+            self.assertIn("deferred", job["error_summary"])
+            self.assertNotIn("fixture-key", job["error_summary"] + " ".join(logged.output))
+            self.assertNotIn("must never be echoed", job["error_summary"])
+
+    def test_missing_calendar_key_can_be_corrected_without_waiting_for_a_cooldown(self):
+        with TemporaryDirectory() as directory:
+            corpus = CorpusManager(str(Path(directory, "bills.db")), "")
+            bill = {"bill_id": "10"}
+            with patch("corpus_manager.requests.get") as request:
+                stats = corpus.refresh_tracked_calendars([bill])
+            request.assert_not_called()
+            self.assertEqual(stats["failure_reasons"], {"No LegiScan API key is configured": 1})
+            self.assertEqual(corpus.calendar_refresh_candidates({"10": bill}), [bill])
 
 
 class CorrectnessFollowupTests(TestCase):

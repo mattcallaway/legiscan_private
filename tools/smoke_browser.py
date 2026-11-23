@@ -166,6 +166,18 @@ def main():
                     expect(admin_page.get_by_text("My hearing portfolio", exact=True)).to_be_visible()
                     expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
                     print("Browser smoke passed: drafting from evidence opens a prefilled form without saving.")
+
+                    admin_page.get_by_role("button", name="⭐ Track", exact=True).click()
+                    expect(admin_page.get_by_role("button", name="❌ Untrack", exact=True)).to_be_visible()
+                    admin_page.get_by_text("Hearing Calendar", exact=True).click()
+                    expect(admin_page.get_by_text("No source calendars are available yet for your tracked bills.")).to_be_visible()
+                    admin_page.get_by_text("Refresh tracked-bill calendars", exact=True).click()
+                    admin_page.get_by_role("button", name="Check up to 25 tracked bills").click()
+                    warning = admin_page.get_by_test_id("stAlertContentWarning")
+                    expect(warning.get_by_text("No LegiScan API key is configured", exact=False)).to_be_visible()
+                    expect(admin_page.get_by_text("Calendar snapshots saved", exact=False)).to_have_count(0)
+                    expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
+                    print("Browser smoke passed: the calendar explains a missing key without showing a success message.")
                     browser.close()
             except Exception:
                 log.seek(0)
