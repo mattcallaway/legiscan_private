@@ -13,3 +13,11 @@
 | Production workflows | Full authenticated watchlist, cross-user privacy, staff automation, source corroboration and live email acceptance remain open. |
 
 This audit checkpoint is ready for continued local development. It does not certify a new VPS deployment, an operating-system migration or any external provider delivery.
+
+## Phase 1 checkpoint
+
+- Local code commit: 4e4b717, on the working branch. Existing account JSON and notification preferences are compatible. Upgrade coordination must stop older account writers first.
+- Isolated regression run: 40 passed, including the temporary PostgreSQL integration with a mock mail transport.
+- Local browser: Edge passed guest entry, dashboard navigation, historical coverage, calendar and custom labels after waiting for the save confirmation. The first run exposed a browser rerun race in the check.
+- Static checks: targeted Ruff and regenerated source map passed. CI is pinned to Ubuntu 24.04 and separates browser and regression jobs. GitHub execution of this workflow remains pending publication.
+- Production remains at the previously verified baseline. No real provider email, synthetic live account changes, or full comparative benchmark was performed for this checkpoint.

@@ -11,6 +11,7 @@ Find California and federal bills, organize a private watchlist, follow legislat
 - [Backup, upgrades, and recovery](#backup-upgrades-and-recovery)
 - [Troubleshooting and verification](#troubleshooting-and-verification)
 - [Technical map](docs/TECHMAP.md) · [Machine-readable installation guide](docs/installation.json) · [Machine-readable call and symbol map](docs/techmap.json)
+- [Development roadmap](docs/DEVELOPMENT_ROADMAP.md) · [Audit findings](docs/AUDIT_FINDINGS.md) · [Release acceptance](docs/RELEASE_ACCEPTANCE.md)
 
 ## User guide
 
