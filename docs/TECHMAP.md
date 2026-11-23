@@ -164,3 +164,7 @@ To inspect call sites programmatically, load `docs/techmap.json`, then find file
 - [Audit regression tests](../tests/test_audit_regressions.py) exercise focused app logic including staff import, historical coverage, job behavior, and private workflows.
 - [Notifications tests](../tests/test_notifications.py) exercise status and mail helpers plus a PostgreSQL integration test with isolated state and a test transport when configured.
 - [CI](../.github/workflows/regression.yml) installs dependencies on Python 3.12, configures PostgreSQL 16 and runs unittest. It checks the call inventory, runs a targeted lint pass, and launches an isolated Streamlit deployment for Playwright navigation. The repository has no deployment pipeline in that workflow. Production host and proxy behavior depend on the operator's environment.
+
+## Civic tag suggestions
+
+The bill detail renderer passes title, description, and subjects to civic_tags.py. It matches boundary-aware phrases from civic_topics.json and displays the associated label and source field. Personal notes and shared keyword data are independent. tools/suggest_civic_terms.py scans an existing SQLite corpus in read-only mode for recurring candidate phrases within a single jurisdiction and optional session. The output is advisory and has no write path.

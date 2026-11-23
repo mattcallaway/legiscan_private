@@ -31,6 +31,18 @@ Open the tracker URL and **Register** or **Sign In**. A registered account keeps
 
 Example. Build a housing portfolio by creating a private topic with phrases like “affordable housing” and “housing element.” Choose the current California session. Review match evidence, track relevant bills, apply your own topic tags and priority, then save a high-priority view and use follow-up dates for deadlines.
 
+### Suggested civic topics
+
+Bill details automatically show suggested civic topics based on the indexed title, summary, and subjects. Expand the details to see the phrase and source field behind each suggestion. The suggestions use a small shared civic dictionary and leave personal topics, saved searches, and shared keyword matches unchanged. A mention is evidence for a suggested label. It does not establish that the bill changes policy in that area.
+
+The dictionary lives in [civic_topics.json](civic_topics.json). It uses specific phrases for subjects such as drinking water, tenant protection, and voter registration. Common words and legislative boilerplate are filtered when finding possible new phrases. After changing the dictionary, restart the app to load the new rules.
+
+To discover recurring phrases in a known California session, run the following against an already indexed corpus. Substitute the numeric session ID. For federal research use --jurisdiction US. The report counts each phrase once per bill, gives preference to phrases found in titles or subjects, and excludes terms that appear in more than 40 percent of the selected bills by default. Review the candidates before adding them to the dictionary.
+
+    python tools/suggest_civic_terms.py /path/to/bills.db --jurisdiction CA --session-id SESSION_ID
+
+Use --min-bills and --max-share to tune the threshold for the selected corpus. The command reads the existing database and prints JSON. It does not need an API key, an additional database, or an external model. The general method is document-frequency filtering. [Document frequency and n-gram reference](https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html)
+
 ### Follow hearings and receive email
 
 **Hearing Calendar** displays published events for watched bills with source snapshot times. Use **Refresh tracked-bill calendars** when available to backfill missing snapshots using an admin account or personal LegiScan key. Export calendar markers as iCalendar. The feed does not provide reliable timezones, so exported events are date-only. When the source lists a time it can appear in the description. Confirm attendance details with the Legislature.

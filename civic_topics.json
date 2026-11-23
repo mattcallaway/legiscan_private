@@ -1,0 +1,39 @@
+{
+  "topics": {
+    "Housing": ["affordable housing", "housing supply", "housing element", "rental housing", "rent control", "tenant protection", "eviction", "homelessness", "supportive housing"],
+    "Water": ["drinking water", "water supply", "water policy", "water quality", "groundwater", "stormwater", "water conservation", "wastewater"],
+    "Climate and energy": ["climate change", "climate resilience", "greenhouse gas", "renewable energy", "clean energy", "electric vehicle", "energy efficiency", "building electrification"],
+    "Environment and public lands": ["environmental justice", "air quality", "plastic pollution", "endangered species", "habitat restoration", "public lands", "toxic substances", "pfas"],
+    "Wildfire and disasters": ["wildfire", "wildfires", "fire prevention", "defensible space", "disaster recovery", "emergency preparedness", "flood risk"],
+    "Health care": ["health care", "health insurance", "public health", "mental health", "behavioral health", "medical debt", "medi-cal", "medicaid", "reproductive health"],
+    "Education": ["public schools", "school district", "special education", "early childhood education", "community college", "student aid", "school funding", "teacher credential"],
+    "Labor and employment": ["minimum wage", "wage theft", "paid leave", "collective bargaining", "workplace safety", "worker classification", "unemployment insurance"],
+    "Transportation": ["public transit", "transit service", "road safety", "traffic safety", "active transportation", "bike lanes", "rail service", "transportation funding"],
+    "Justice and public safety": ["criminal justice", "sentencing reform", "public defender", "right to counsel", "law enforcement", "police accountability", "gun violence", "domestic violence"],
+    "Civil rights and elections": ["civil rights", "voting rights", "voter registration", "ballot access", "disability rights", "language access", "racial discrimination", "campaign finance"],
+    "Food and family assistance": ["food assistance", "food insecurity", "school meals", "calfresh", "child care", "child welfare", "foster care", "income assistance"],
+    "Consumer protection and privacy": ["consumer protection", "data privacy", "personal information", "identity theft", "predatory lending", "debt collection", "price gouging"],
+    "Tribal affairs": ["tribal consultation", "tribal sovereignty", "tribal governments", "tribal lands", "native american heritage"]
+  },
+  "procedural_phrases": [
+    "an act to amend", "an act to add", "an act to repeal", "as amended", "relating to",
+    "legislative counsel's digest", "the people of the state of california do enact",
+    "existing law requires", "this bill would", "no reimbursement is required",
+    "read a first time", "read a second time", "read a third time", "ordered to the senate",
+    "ordered to the assembly", "referred to the committee", "chaptered by secretary of state",
+    "state mandated local program", "an urgency statute", "take effect immediately"
+  ],
+  "stop_words": [
+    "a", "act", "add", "amend", "amended", "an", "and", "any", "applicable", "application",
+    "apply", "are", "as", "at", "be", "before", "bill", "but", "by", "california",
+    "chapter", "code", "committee", "department", "division", "does", "each", "effective",
+    "enact", "entity", "existing", "for", "from", "fund", "funds", "general", "has", "have",
+    "if", "implementation", "include", "including", "in", "is", "it", "its", "law", "laws",
+    "legislative", "legislature", "local", "may", "measure", "must", "new", "not", "of", "on",
+    "or", "other", "part", "person", "persons", "prescribed", "program", "prohibit", "proposed",
+    "provide", "provides", "provision", "provisions", "public", "pursuant", "related", "repeal",
+    "require", "required", "requires", "section", "senate", "shall", "specified", "state",
+    "statute", "subject", "submit", "subdivision", "that", "the", "their", "this", "to",
+    "under", "unless", "upon", "use", "used", "was", "which", "will", "with", "would"
+  ]
+}

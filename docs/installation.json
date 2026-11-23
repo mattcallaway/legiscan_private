@@ -64,6 +64,15 @@
       "python",
       "tools/rehearse_restore.py",
       "{cold_backup_archive}"
+    ],
+    "suggest_civic_terms": [
+      "python",
+      "tools/suggest_civic_terms.py",
+      "{corpus_db}",
+      "--jurisdiction",
+      "CA",
+      "--session-id",
+      "{session_id}"
     ]
   },
   "platforms": {

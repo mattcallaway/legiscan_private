@@ -26,6 +26,7 @@ from bill_research import (
     amendment_diff, bill_revision, build_review_queue, changed_fields, parse_topic_rules,
     readable_bill_markup, topic_match_reason,
 )
+from civic_tags import suggest_civic_topics
 from hearing_calendar import source_link
 
 from job_manager import JobManager
@@ -599,6 +600,7 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
     kw_raw      = str(row.get('keyword', '') or '')
     kw_tags     = [t.strip() for t in kw_raw.replace(';', ',').split(',') if t.strip()]
     disp_bill_number = row.get('bill_number', bill_id)
+    civic_topics = suggest_civic_topics(row)
     
     with st.container(border=True):
         c1, c2 = st.columns([5, 1])
@@ -634,6 +636,10 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
             
             if kw_tags:
                 st.write(" ".join([f"`{t}`" for t in kw_tags]))
+
+            if civic_topics:
+                labels = ", ".join(item["topic"] for item in civic_topics)
+                st.caption(f"Suggested civic topics: {labels}")
 
             sponsors = str(row.get('sponsors', row.get('sponsor_names', '—')))
             if sponsors != '—' and sponsors.strip():
@@ -680,6 +686,12 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                 st.write(f"**Committee(s):** {committees}")
                 subjects = row.get('subjects', '')
                 if subjects: st.write(f"**Subjects:** {subjects}")
+
+            for item in civic_topics:
+                evidence = ", ".join(
+                    f'{match["phrase"]} ({match["field"]})' for match in item["evidence"]
+                )
+                st.caption(f'{item["topic"]} suggested from {evidence}')
 
             st.divider()
             baseline_key = f"{_username}:{key_prefix}_note_baseline"
