@@ -16,3 +16,7 @@
 Check service health, active release, log errors, LegiScan request quota, stale jobs, corpus freshness, queue age, and staff preview count changes. Email needs PostgreSQL connectivity, verified Resend sender, completed initialization, active preferences, and a scheduled sender. Keep secrets in protected process configuration and keep private backups independent from Git publication.
 
 The audited VPS had a healthy `221f279` checkout and the legacy staff cron temporarily paused. PostgreSQL/Resend were unconfigured at the last observed checkpoint. The account store, staff and historical records remain on durable filesystem paths. Exact credential values and private backup inventory belong to the operator environment.
+
+## Phase 1 compatibility
+
+Stop old writers before switching releases to activate cross-process serialization. The service account needs write access to the account directory for the lock file and atomic replacement. Account JSON shape, existing hashes, and notification preferences are preserved. New notification address submissions accept ASCII mailbox syntax and ASCII IDN domains in punycode, with carriage returns and line feeds rejected before normalization. Original bill documents remain linked for formatting and metadata omitted by the safe interactive reader.

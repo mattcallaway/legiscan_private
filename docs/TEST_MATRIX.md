@@ -13,3 +13,5 @@ Baseline local Python 3.12 run collected 37 tests, with 36 passing and one skipp
 | Deployment and privacy | Browser check for health, guest dashboard, coverage, calendar and custom labels; path allowlist and isolated data restore tests. | Production authenticated workflow, protected backup rehearsal and full rollback drill with a copied data directory. |
 
 [Regression tests](../tests/test_audit_regressions.py) · [Notification tests](../tests/test_notifications.py) · [Browser test](../tools/smoke_browser.py) · [CI workflow](../.github/workflows/regression.yml).
+
+Phase 1 adds a child-process writer barrier test, explicit email address policy cases, and safe bill markup coverage. Earlier deployment evidence remains tied to its original commit. The CI workflow uses separate browser and regression jobs on Ubuntu 24.04 for `improved` pushes and pull requests targeting it.

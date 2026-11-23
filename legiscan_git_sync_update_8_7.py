@@ -21,7 +21,12 @@ from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from bill_workspace import export_workspace, read_workspace, reattach_profile_note, resolve_attachment, update_tracking, update_bill_note, update_workspace
-from bill_research import amendment_diff, bill_revision, build_review_queue, changed_fields, parse_topic_rules, topic_match_reason
+from html import escape
+from bill_research import (
+    amendment_diff, bill_revision, build_review_queue, changed_fields, parse_topic_rules,
+    readable_bill_markup, topic_match_reason,
+)
+from hearing_calendar import source_link
 
 from job_manager import JobManager
 from job_runner import current_session, run_bootstrap_job, run_refresh_job, run_rescan_job, sync_selected_sessions
@@ -512,24 +517,31 @@ def _show_bill_text_modal(bill_id, doc_id, bill_number, bill_url=None):
     
     if not res:
         st.error("Could not retrieve bill text. It may not be available in HTML format yet.")
-        if bill_url:
-            st.link_button("View on LegiScan", bill_url)
+        if link := source_link(bill_url):
+            st.link_button("View on LegiScan", link)
         return
     
     if res.get("html"):
+        try:
+            markup = readable_bill_markup(res["html"])
+        except ValueError as error:
+            st.warning(str(error))
+            if link := source_link(bill_url):
+                st.link_button("View on LegiScan", link)
+            return
         # Wrap in a scrolling div for better UX
         st.components.v1.html(
             f"""
             <div style="font-family: sans-serif; line-height: 1.6; color: #333; height: 80vh; overflow-y: scroll; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-                {res['html']}
+                {markup}
             </div>
             """,
             height=850,
             scrolling=False
         )
-    elif res.get("pdf_url"):
+    elif link := source_link(res.get("pdf_url")):
         st.info("HTML text not available. You can view the official PDF below:")
-        st.link_button("📂 View PDF", res['pdf_url'], use_container_width=True)
+        st.link_button("📂 View PDF", link, use_container_width=True)
     else:
         st.warning("No text content found.")
 
@@ -603,13 +615,13 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
         with c1:
             st.markdown(f"### {disp_bill_number}: {row.get('title', 'No title')}")
             
-            indicator_html = f"<b>{jur_icon} {jur_name}</b> &nbsp;|&nbsp; 📋 {status_lbl}"
+            indicator_html = f"<b>{jur_icon} {escape(str(jur_name))}</b> &nbsp;|&nbsp; 📋 {escape(str(status_lbl))}"
             prio = note.get('priority')
             if prio == 'High': indicator_html += " &nbsp;|&nbsp; <span style='color:red;'><b>🔥 High Priority</b></span>"
-            elif prio: indicator_html += f" &nbsp;|&nbsp; 🔥 {prio}"
+            elif prio: indicator_html += f" &nbsp;|&nbsp; 🔥 {escape(str(prio))}"
             
             pos = note.get('position')
-            if pos: indicator_html += f" &nbsp;|&nbsp; 🏷️ <b>{pos}</b>"
+            if pos: indicator_html += f" &nbsp;|&nbsp; 🏷️ <b>{escape(str(pos))}</b>"
             
             if bool(note.get('comment', '').strip()): indicator_html += " &nbsp;|&nbsp; 📝 Has Notes"
             if bill_id in tracked_bills: indicator_html += " &nbsp;|&nbsp; ⭐ Tracked"
@@ -624,11 +636,11 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                     dt = datetime.strptime(str(last_action_date).split()[0], '%Y-%m-%d').replace(tzinfo=timezone.utc)
                     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
                     if dt < (now_utc - timedelta(days=540)):
-                        staleness_warning = " ⚠️ <i>(Warning: Last action is > 18 months old)</i>"
+                        staleness_warning = " ⚠️ *(Warning: Last action is > 18 months old)*"
                 except: pass
                 
             if last_action or last_action_date:
-                st.caption(f"**Last Action:** {last_action} ({last_action_date}){staleness_warning}", unsafe_allow_html=True)
+                st.caption(f"**Last Action:** {last_action} ({last_action_date}){staleness_warning}")
             
             if kw_tags:
                 st.write(" ".join([f"`{t}`" for t in kw_tags]))
@@ -866,15 +878,15 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                                         raw_name = mv.get('name') or ""
                                         
                                         if not raw_name or "Unknown Profile" in raw_name:
-                                            p_name = f"<span style='color:red;'>[Unresolved ID {mv.get('people_id')}]</span>"
+                                            p_name = f"<span style='color:red;'>[Unresolved ID {escape(str(mv.get('people_id')))}]</span>"
                                         elif mv.get('staff_legislator_id'):
                                             # If mapped, indicate linkage (we could link to profile here later)
-                                            p_name = f"**{raw_name}**"
+                                            p_name = f"<strong>{escape(str(raw_name))}</strong>"
                                         else:
-                                            p_name = raw_name
+                                            p_name = escape(str(raw_name))
                                             
                                         color = "green" if v_txt == "Yea" else ("red" if v_txt == "Nay" else "gray")
-                                        cols[v_idx % 3].markdown(f"{p_name}: <span style='color:{color}; font-weight:bold;'>{v_txt}</span>", unsafe_allow_html=True)
+                                        cols[v_idx % 3].markdown(f"{p_name}: <span style='color:{color}; font-weight:bold;'>{escape(str(v_txt))}</span>", unsafe_allow_html=True)
                             st.divider()
                 except Exception as e:
                     st.error(f"Error loading votes: {e}")
@@ -1207,7 +1219,11 @@ with st.sidebar.expander("🛠️ Advanced Filters"):
                 except (OSError, ValueError, sqlite3.Error) as error:
                     st.error(f"Could not save the status label: {error}")
                 else:
-                    st.rerun()
+                    st.session_state["status_label_saved"] = True
+                st.rerun()
+
+    if st.session_state.pop("status_label_saved", False):
+        st.success("Status label saved.")
 
 
 # ── E. MODE-SPECIFIC OVERLAYS ──────────────────────────────────────────────────

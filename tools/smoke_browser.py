@@ -79,6 +79,7 @@ def main():
                     page.get_by_role("textbox", name="Custom Status Code").fill("99")
                     page.get_by_role("textbox", name="Custom Status Label").fill("Needs research")
                     page.get_by_role("button", name="Save Status Label").click()
+                    expect(page.get_by_text("Status label saved.", exact=True)).to_be_visible(timeout=15_000)
                     status_filter = page.get_by_test_id("stMultiSelect").filter(has_text="Status Stage")
                     status_filter.get_by_role("combobox").fill("Needs research")
                     expect(page.get_by_text("Needs research [99]", exact=True)).to_be_visible()

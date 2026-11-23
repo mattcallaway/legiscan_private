@@ -105,7 +105,10 @@ def enabled_config():
 
 
 def normalize_email(value):
-    value = value.strip()
+    """Accept ASCII mailboxes and DNS domains, including ASCII IDN A-labels."""
+    if not value.isascii() or "\r" in value or "\n" in value:
+        raise ValueError("Enter a valid email address.")
+    value = value.strip(" \t")
     local, separator, domain = value.rpartition("@")
     atom = r"[A-Za-z0-9!#$%&'*+/=?^_{}`|~\-]+"
     label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -114,10 +117,17 @@ def normalize_email(value):
         or len(value) > 254
         or len(local) > 64
         or not re.fullmatch(rf"{atom}(?:\.{atom})*", local)
-        or not re.fullmatch(rf"(?:{label}\.)+[A-Za-z]{{2,63}}", domain)
+        or not re.fullmatch(rf"(?:{label}\.)+(?:[A-Za-z]{{2,63}}|(?i:xn--)[A-Za-z0-9-]{{1,58}}[A-Za-z0-9])", domain)
     ):
         raise ValueError("Enter a valid email address.")
-    return f"{local}@{domain.lower()}"
+    domain = domain.lower()
+    for component in domain.split("."):
+        if component.startswith("xn--"):
+            try:
+                component.encode("ascii").decode("idna")
+            except UnicodeError:
+                raise ValueError("Enter a valid email address.") from None
+    return f"{local}@{domain}"
 
 
 def status_code(value):

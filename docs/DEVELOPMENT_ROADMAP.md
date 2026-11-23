@@ -1,6 +1,6 @@
 # Development roadmap
 
-Prioritize verified correctness and data preservation. Move from local fixtures through integration, authenticated acceptance and controlled rollout. Each implementation commit needs evidence, acceptance criteria and rollback implications.
+Develop on `improved`. Use `main` solely as a legacy comparison. Prioritize verified correctness and data preservation. Move from local fixtures through integration, authenticated acceptance and controlled rollout. Each implementation commit needs evidence, acceptance criteria and rollback implications.
 
 | Phase | Priority and scope | Dependencies | Complexity | Exit criteria and status |
 | --- | --- | --- | --- | --- |

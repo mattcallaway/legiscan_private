@@ -20,6 +20,25 @@ class NotificationTests(TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 normalize_email(value)
 
+    def test_email_policy_handles_header_edges_lengths_and_idn(self):
+        accepted = {
+            "simple@example.org": "simple@example.org",
+            "Susan+ca@Alerts.EXAMPLE.ORG": "Susan+ca@alerts.example.org",
+            "research@xn--bcher-kva.example": "research@xn--bcher-kva.example",
+            "research@example.xn--p1ai": "research@example.xn--p1ai",
+        }
+        for value, expected in accepted.items():
+            with self.subTest(value=value):
+                self.assertEqual(normalize_email(value), expected)
+        invalid = (
+            "user@example.org\r\n", "\nuser@example.org", "user@example.org\nBcc: other@example.org",
+            "user@bücher.example", "résumé@example.org", "\u00a0user@example.org",
+            "x@" + ".".join(["a" * 63] * 4 + ["org"]), "x@domain.invalid_",
+        )
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_email(value)
+
     def test_status_baseline_changes_and_removal(self):
         old = {"1": "0", "2": "1", "3": "2"}
         current = {"1": {"status": 1}, "2": {"status": "Unknown"}, "4": {"status": "5"}}

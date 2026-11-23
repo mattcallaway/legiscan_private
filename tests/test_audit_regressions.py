@@ -1,6 +1,8 @@
 import csv
 import json
 import sqlite3
+import sys
+import time
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -825,3 +827,68 @@ class CorrectnessFollowupTests(TestCase):
                     manager.start_job("keyword_rescan", "CA")
                 self.assertEqual(manager.get_job(job)["status"], "RUNNING")
             self.assertEqual(manager.claim_next_job()["retry_of"], job)
+
+
+class CrossProcessAccountTests(TestCase):
+    def test_registration_waits_for_independent_writer_and_preserves_its_record(self):
+        script = """
+import os
+import sys
+from pathlib import Path
+os.environ.update(DATA_DIR=sys.argv[1], REPO_DIR="", API_KEY="")
+from auth import register_user
+Path(sys.argv[1], "child-ready").touch()
+ok, message = register_user("second", "fixture-password")
+if not ok:
+    raise SystemExit(message)
+"""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            accounts = root / "users.json"
+            existing = {"first": {"role": "admin", "password_hash": "fixture-existing-hash",
+                                  "workspace_id": "existing-workspace"}}
+            with closing(sqlite3.connect(str(accounts) + ".lock.sqlite3")) as owner:
+                owner.execute("BEGIN IMMEDIATE")
+                child = subprocess.Popen(
+                    [sys.executable, "-B", "-c", script, directory],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                )
+                try:
+                    deadline = time.monotonic() + 15
+                    while not (root / "child-ready").exists() and time.monotonic() < deadline:
+                        self.assertIsNone(child.poll())
+                        time.sleep(0.02)
+                    self.assertTrue((root / "child-ready").exists(), "Child did not reach registration")
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        child.communicate(timeout=1.5)
+                    self.assertFalse(accounts.exists())
+                    accounts.write_text(json.dumps(existing), encoding="utf-8")
+                    owner.commit()
+                    stdout, stderr = child.communicate(timeout=15)
+                    self.assertEqual(child.returncode, 0, stdout + stderr)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                    child.communicate()
+            current = json.loads(accounts.read_text(encoding="utf-8"))
+            self.assertEqual(current["first"], existing["first"])
+            self.assertEqual(current["second"]["role"], "user")
+
+
+class BillMarkupTests(TestCase):
+    def test_reader_keeps_structure_and_escapes_text_without_source_attributes(self):
+        from bill_research import readable_bill_markup
+
+        source = (
+            '<head><title>Metadata</title></head><section class="external">'
+            '<h2>Section 1</h2><p>A &lt; B &amp; C</p>'
+            '<p><del>Old</del><ins>New</ins></p>'
+            '<table><tr><td>2025</td></tr></table></section>'
+        )
+        self.assertEqual(
+            readable_bill_markup(source),
+            '<section><h2>Section 1</h2><p>A &lt; B &amp; C</p>'
+            '<p><del>Old</del><ins>New</ins></p><table><tr><td>2025</td></tr></table></section>',
+        )
+        with self.assertRaises(ValueError):
+            readable_bill_markup("x" * 2_000_001)

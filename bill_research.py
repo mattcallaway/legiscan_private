@@ -3,6 +3,7 @@ from datetime import date
 from difflib import unified_diff
 from hashlib import sha256
 import json
+from html import escape
 from html.parser import HTMLParser
 
 
@@ -52,6 +53,50 @@ class _BillTextParser(HTMLParser):
     def handle_data(self, data):
         if not self.hidden:
             self.parts.append(data)
+
+
+
+class _ReadableMarkup(HTMLParser):
+    _allowed = frozenset({
+        "p", "div", "section", "article", "h1", "h2", "h3", "h4", "h5", "h6",
+        "ul", "ol", "li", "dl", "dt", "dd", "blockquote", "pre", "code",
+        "strong", "em", "b", "i", "s", "u", "ins", "del", "sup", "sub",
+        "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td", "br", "hr",
+    })
+    _void = frozenset({"br", "hr"})
+    _hidden = frozenset({"head", "script", "style", "template"})
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self.hidden = None
+
+    def handle_starttag(self, tag, attrs):
+        if self.hidden is None:
+            if tag in self._hidden:
+                self.hidden = tag
+            elif tag in self._allowed:
+                self.parts.append(f"<{tag}>")
+
+    def handle_endtag(self, tag):
+        if self.hidden == tag:
+            self.hidden = None
+        elif self.hidden is None and tag in self._allowed and tag not in self._void:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self.hidden is None:
+            self.parts.append(escape(data, quote=False))
+
+
+def readable_bill_markup(markup):
+    """Keep legislative structure and text while discarding all source attributes."""
+    if len(markup) > 2_000_000:
+        raise ValueError("This version is too large for the interactive reader.")
+    parser = _ReadableMarkup()
+    parser.feed(markup)
+    parser.close()
+    return "".join(parser.parts)
 
 
 def amendment_diff(before, after):

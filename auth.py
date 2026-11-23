@@ -12,9 +12,10 @@ Design principles:
 import os
 import json
 import logging
+import sqlite3
+from contextlib import closing
 from functools import wraps
-from tempfile import TemporaryDirectory
-from threading import RLock
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from uuid import uuid4
 from datetime import datetime, timezone
 
@@ -24,7 +25,6 @@ import streamlit as st
 from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
-_user_lock = RLock()
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 USERS_FILE   = os.path.join(DATA_DIR, "users.json")
@@ -53,11 +53,14 @@ def get_guest_data_dir() -> str:
 def _serialize_account_write(function):
     @wraps(function)
     def serialized(*args, **kwargs):
-        with _user_lock:
-            try:
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            # All writers lock the same file even when users.json is atomically replaced.
+            with closing(sqlite3.connect(f"{USERS_FILE}.lock.sqlite3", timeout=10)) as lock, lock:
+                lock.execute("BEGIN IMMEDIATE")
                 return function(*args, **kwargs)
-            except RuntimeError:
-                return False, "Account storage is unavailable."
+        except (OSError, RuntimeError, sqlite3.Error):
+            return False, "Account storage is unavailable."
     return serialized
 
 
@@ -77,16 +80,25 @@ def _load_users() -> dict:
 
 
 def _save_users(users: dict) -> bool:
+    pending = None
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = USERS_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(users, f, indent=2)
-        os.replace(tmp, USERS_FILE)
+        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=DATA_DIR, delete=False) as file:
+            pending = file.name
+            json.dump(users, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(pending, USERS_FILE)
+        pending = None
         return True
-    except Exception as e:
-        logger.error(f"auth: failed to save users file: {e}")
+    except (OSError, ValueError) as error:
+        logger.error("Account storage could not be written: %s", type(error).__name__)
         return False
+    finally:
+        if pending:
+            try:
+                os.unlink(pending)
+            except OSError:
+                logger.warning("Could not remove temporary account file.")
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
@@ -180,11 +192,13 @@ def register_user(username: str, password: str, api_key: str = "") -> tuple[bool
     return True, f"Account created! You are now logged in as '{username}'."
 
 
-@_serialize_account_write
 def login_user(username: str, password: str) -> tuple[bool, str]:
-    """Verify credentials and set session state. Returns (success, message)."""
+    """Read one account snapshot and verify credentials without holding the write lock."""
     username = username.strip().lower()
-    users = _load_users()
+    try:
+        users = _load_users()
+    except RuntimeError:
+        return False, "Account storage is unavailable."
     u = users.get(username)
     if u is None or len(password.encode("utf-8")) > 72 or not _check_password(password, u.get("password_hash", "")):
         return False, "Invalid username or password."
