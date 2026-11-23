@@ -1,6 +1,7 @@
-"""Opt-in tracked-bill status notifications backed by PostgreSQL and Resend."""
+"""Opt-in tracked-bill notifications backed by PostgreSQL and Resend."""
 from contextlib import closing
 import csv
+from datetime import date
 from hashlib import sha256
 from hmac import compare_digest
 import json
@@ -34,6 +35,10 @@ SCHEMA = (
         attempts integer NOT NULL DEFAULT 0, state text NOT NULL DEFAULT 'pending',
         provider_id text, last_error text
     )""",
+    "ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS activity_types text[] NOT NULL DEFAULT '{}'",
+    "ALTER TABLE notification_bill_status ADD COLUMN IF NOT EXISTS activity jsonb NOT NULL DEFAULT '{}'",
+    "ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS activity_type text",
+    "ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS activity_detail text",
     """CREATE INDEX IF NOT EXISTS notification_outbox_pending
        ON notification_outbox (available_at, created_at) WHERE state='pending'""",
 )
@@ -45,6 +50,43 @@ STATUS_LABELS = {
     "8": "Chaptered", "9": "Referred", "10": "Reported pass",
     "11": "Reported do not pass", "12": "Draft",
 }
+
+
+ACTIVITY_LABELS = {
+    "hearings": "Hearing calendar",
+    "amendments": "Bill text version",
+    "committees": "Committee activity",
+}
+
+
+def activity_snapshot(record):
+    """Return observed activity fields, leaving unavailable source data unobserved."""
+    activity = {}
+    if "hearings" in record:
+        activity["hearings"] = sorted({
+            " · ".join(str(event[field]) for field in ("date", "time", "type", "description", "location") if event.get(field))
+            for event in record["hearings"]
+        } - {""})
+    if record.get("latest_doc_id"):
+        activity["amendments"] = str(record["latest_doc_id"])
+    if "committee" in record or "referrals" in record:
+        activity["committees"] = " · ".join(
+            str(record[field]) for field in ("committee", "referrals") if record.get(field)
+        )
+    return activity
+
+
+def activity_description(kind, previous, current):
+    if kind == "hearings":
+        today = date.today().isoformat()
+        added = sorted(item for item in set(current) - set(previous) if item[:10] >= today)
+        removed = sorted(item for item in set(previous) - set(current) if item[:10] >= today)
+        lines = [*(f"Added or updated: {item}" for item in added),
+                 *(f"No longer listed: {item}" for item in removed)]
+        return "\n".join(lines)[:3500]
+    if kind == "amendments":
+        return "The latest indexed bill text version changed. Open the bill to compare versions."
+    return f"Previously: {previous[:1500]}\nNow: {current[:1500]}"
 
 
 class MailError(RuntimeError):
@@ -64,9 +106,17 @@ def enabled_config():
 
 def normalize_email(value):
     value = value.strip()
-    if len(value) > 254 or not re.fullmatch(r"[^@s<>,;]+@[A-Za-z0-9.-]+.[A-Za-z]{2,}", value):
+    local, separator, domain = value.rpartition("@")
+    atom = r"[A-Za-z0-9!#$%&'*+/=?^_{}`|~\-]+"
+    label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    if (
+        not separator
+        or len(value) > 254
+        or len(local) > 64
+        or not re.fullmatch(rf"{atom}(?:\.{atom})*", local)
+        or not re.fullmatch(rf"(?:{label}\.)+[A-Za-z]{{2,63}}", domain)
+    ):
         raise ValueError("Enter a valid email address.")
-    local, domain = value.rsplit("@", 1)
     return f"{local}@{domain.lower()}"
 
 
@@ -164,7 +214,7 @@ class Notifications:
     def get_preferences(self, owner):
         with self._connect() as conn:
             row = conn.execute(
-                """SELECT email, enabled, CASE WHEN expires_at>now() THEN pending_email END AS pending_email
+                """SELECT email, enabled, activity_types, CASE WHEN expires_at>now() THEN pending_email END AS pending_email
                    FROM notification_preferences WHERE owner=%s""", (owner,),
             ).fetchone()
             return row or {}
@@ -229,6 +279,34 @@ class Notifications:
             if changed:
                 conn.execute("DELETE FROM notification_bill_status WHERE owner=%s", (owner,))
 
+    def set_activity_types(self, owner, kinds):
+        kinds = sorted(set(kinds))
+        if any(kind not in ACTIVITY_LABELS for kind in kinds):
+            raise ValueError("Unknown alert type.")
+        with self._connect() as conn:
+            lease = conn.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended('bill-notification-pass', 0)) AS acquired"
+            ).fetchone()
+            if not lease["acquired"]:
+                raise ValueError("An alert pass is running. Try saving again shortly.")
+            prior = conn.execute(
+                "SELECT activity_types FROM notification_preferences WHERE owner=%s AND email IS NOT NULL FOR UPDATE",
+                (owner,),
+            ).fetchone()
+            if not prior:
+                raise ValueError("Verify your email first.")
+            changed_kinds = set(kinds) ^ set(prior["activity_types"])
+            if changed_kinds:
+                conn.execute("UPDATE notification_preferences SET activity_types=%s WHERE owner=%s", (kinds, owner))
+                conn.execute(
+                    "UPDATE notification_bill_status SET activity=activity-%s::text[] WHERE owner=%s",
+                    (sorted(changed_kinds), owner),
+                )
+                conn.execute(
+                    "UPDATE notification_outbox SET state='skipped' WHERE owner=%s AND state='pending' AND activity_type=ANY(%s)",
+                    (owner, sorted(changed_kinds)),
+                )
+
     def capture_status_changes(self, workspaces, status_lookup):
         total = 0
         with self._connect() as conn:
@@ -242,13 +320,14 @@ class Notifications:
             current = status_lookup(watched)
             with self._connect() as conn:
                 preference = conn.execute(
-                    "SELECT enabled FROM notification_preferences WHERE owner=%s FOR UPDATE", (owner,),
+                    "SELECT enabled, activity_types FROM notification_preferences WHERE owner=%s FOR UPDATE", (owner,),
                 ).fetchone()
                 if not preference or not preference["enabled"]:
                     continue
-                before = {row["bill_id"]: row["status"] for row in conn.execute(
-                    "SELECT bill_id, status FROM notification_bill_status WHERE owner=%s", (owner,),
+                baseline = {row["bill_id"]: row for row in conn.execute(
+                    "SELECT bill_id, status, activity FROM notification_bill_status WHERE owner=%s", (owner,),
                 )}
+                before = {bill: row["status"] for bill, row in baseline.items()}
                 state, transitions = preferences_sync(before, current, watched)
                 removed = list(before.keys() - state.keys())
                 if removed:
@@ -260,6 +339,31 @@ class Notifications:
                                ON CONFLICT(owner,bill_id) DO UPDATE SET status=excluded.status""",
                             (owner, bill, value),
                         )
+                activities = set(preference["activity_types"])
+                for bill in state.keys() & current.keys():
+                    previous = baseline.get(bill, {}).get("activity", {})
+                    observed = activity_snapshot(current[bill])
+                    updated = {**previous, **{key: observed[key] for key in activities & observed.keys()}}
+                    if updated != previous:
+                        conn.execute(
+                            "UPDATE notification_bill_status SET activity=%s::jsonb WHERE owner=%s AND bill_id=%s",
+                            (json.dumps(updated), owner, bill),
+                        )
+                    for kind in sorted(activities & observed.keys() & previous.keys()):
+                        if observed[kind] == previous[kind]:
+                            continue
+                        detail = activity_description(kind, previous[kind], observed[kind])
+                        if not detail:
+                            continue
+                        record = current[bill]
+                        conn.execute(
+                            """INSERT INTO notification_outbox
+                               (id,owner,bill_id,bill_number,title,source_url,old_status,new_status,activity_type,activity_detail)
+                               VALUES (%s,%s,%s,%s,%s,%s,'','',%s,%s)""",
+                            (uuid4().hex, owner, bill, record.get("bill_number") or bill,
+                             record.get("title") or "", source_link(record.get("url")), kind, detail),
+                        )
+                        total += 1
                 for bill, old, new, record in transitions:
                     conn.execute(
                         """INSERT INTO notification_outbox
@@ -283,12 +387,13 @@ class Notifications:
                 if not job:
                     break
                 preference = conn.execute(
-                    """SELECT email, enabled, enabled_at<=%s AS same_subscription
+                    """SELECT email, enabled, activity_types, enabled_at<=%s AS same_subscription
                        FROM notification_preferences WHERE owner=%s FOR UPDATE""",
                     (job["created_at"], job["owner"]),
                 ).fetchone()
                 allowed = (
                     not job["expired"] and preference and preference["enabled"] and preference["same_subscription"]
+                    and (job["activity_type"] is None or job["activity_type"] in preference["activity_types"])
                 )
                 watched = read_notification_watchlists(data_dir, only_owner=job["owner"]) if allowed else {}
                 if job["bill_id"] not in watched.get(job["owner"], set()):
@@ -297,12 +402,17 @@ class Notifications:
                 number = " ".join(job["bill_number"].split())
                 old = STATUS_LABELS.get(job["old_status"], job["old_status"])
                 new = STATUS_LABELS.get(job["new_status"], job["new_status"])
-                body = (f"{number} — {job['title']}\n\nStatus changed from {old} to {new}.\n\n"
-                        f"{job['source_url']}\n\nYou are receiving this because you track this bill. "
+                if job["activity_type"]:
+                    subject = f"{number}: {ACTIVITY_LABELS[job['activity_type']]} changed"
+                    detail = job["activity_detail"]
+                else:
+                    subject = f"{number}: bill status changed"
+                    detail = f"Status changed from {old} to {new}."
+                body = (f"{number} — {job['title']}\n\n{detail}\n\n{job['source_url']}\n\n"
+                        "You are receiving this because you track this bill. "
                         "Manage alerts in Email Notifications in the tracker.")
                 try:
-                    provider_id = self._send(preference["email"], f"{number}: bill status changed", body,
-                                             f"bill-status/{job['id']}")
+                    provider_id = self._send(preference["email"], subject, body, f"bill-status/{job['id']}")
                 except MailError as error:
                     attempt = job["attempts"] + 1
                     retry = error.retryable and attempt < 6
@@ -351,9 +461,15 @@ def snapshot_statuses(data_dir, watched):
         with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
             conn.row_factory = sqlite3.Row
             results = {str(row["bill_id"]): dict(row) for row in conn.execute(
-                """SELECT bill_id, bill_number, title, status_stage AS status, url FROM bills
+                """SELECT bill_id, bill_number, title, status_stage AS status, url, latest_doc_id, committee, referrals FROM bills
                    WHERE bill_id IN (SELECT value FROM json_each(?))""", (json.dumps(list(watched)),),
             )}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='bill_calendar_snapshots'").fetchone():
+                for row in conn.execute(
+                    """SELECT bill_id, events_json FROM bill_calendar_snapshots
+                       WHERE bill_id IN (SELECT value FROM json_each(?))""", (json.dumps(list(results)),),
+                ):
+                    results[str(row["bill_id"])]["hearings"] = json.loads(row["events_json"])
     snapshot = root / "LegiScan_Enhanced_Full_Tracker.csv"
     if snapshot.is_file() and watched - results.keys():
         with snapshot.open(encoding="utf-8-sig", newline="") as file:

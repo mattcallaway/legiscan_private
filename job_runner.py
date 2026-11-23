@@ -159,7 +159,14 @@ def run_calendar_refresh(corpus, bills, job_manager, progress_cb=None, *, job_id
 
 
 def execute_next_job(corpus, data_dir, job_manager):
-    """Run one queued job. The queue contains instructions and no credentials."""
+    """Run one queued job while holding exclusive ownership of worker writes."""
+    with job_manager.worker_ownership() as owned:
+        if owned:
+            return _execute_claimed_job(corpus, data_dir, job_manager)
+    return None
+
+
+def _execute_claimed_job(corpus, data_dir, job_manager):
     job = job_manager.claim_next_job()
     if job is None:
         return None
@@ -201,8 +208,10 @@ def execute_next_job(corpus, data_dir, job_manager):
             run_calendar_refresh(corpus, payload["bills"], job_manager, progress, job_id=identifier)
         elif kind == "keyword_rescan":
             run_rescan_job(corpus, payload["states"], data_dir, job_manager, progress, job_id=identifier)
-            from sync_github_repo import sync_with_remote
-            sync_with_remote()
+            if job_manager.get_job(identifier)["status"] == "SUCCESS":
+                from sync_github_repo import sync_with_remote
+
+                sync_with_remote()
         else:
             raise ValueError("Unsupported queued sync job.")
     except Exception as error:

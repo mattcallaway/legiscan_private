@@ -1,5 +1,5 @@
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 import os
 import uuid
 import datetime
@@ -57,6 +57,22 @@ class JobManager:
         except Exception as e:
             raise RuntimeError("Could not initialize sync job storage.") from e
 
+    @contextmanager
+    def worker_ownership(self):
+        """Hold a process-scoped writer lock while a worker can mutate shared state."""
+        with closing(sqlite3.connect(f"{self.db_path}.worker-lock", timeout=0)) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as error:
+                if getattr(error, "sqlite_errorcode", None) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                    raise
+                yield False
+            else:
+                try:
+                    yield True
+                finally:
+                    connection.rollback()
+
     def start_job(self, job_type: str, jurisdiction: str = "", session_scope: str = "", initiated_by: str = "system") -> str:
         job_id = str(uuid.uuid4())
         now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
@@ -64,7 +80,8 @@ class JobManager:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN IMMEDIATE")
             if job_type in CORPUS_JOB_TYPES:
-                self._recover_interrupted(conn, now)
+                with self.worker_ownership() as worker_idle:
+                    self._recover_interrupted(conn, now, recover_queued=worker_idle)
                 existing = self._active_corpus_job(conn)
                 if existing:
                     raise JobConflict(f"A {existing['job_type']} job is already running for {existing['jurisdiction'] or 'the corpus'}.")
@@ -83,14 +100,14 @@ class JobManager:
             CORPUS_JOB_TYPES,
         ).fetchone()
 
-    def _recover_interrupted(self, conn, now):
+    def _recover_interrupted(self, conn, now, *, recover_queued=True):
         queued_cutoff = (now - datetime.timedelta(minutes=QUEUED_LEASE_MINUTES)).isoformat()
         direct_cutoff = (now - datetime.timedelta(hours=STALE_JOB_HOURS)).isoformat()
         expired = conn.execute(
             """SELECT * FROM system_jobs WHERE status='RUNNING' AND
-               ((queue_payload IS NOT NULL AND coalesce(heartbeat_at, start_time)<=?)
+               ((? AND queue_payload IS NOT NULL AND coalesce(heartbeat_at, start_time)<=?)
                OR (queue_payload IS NULL AND start_time<=?))""",
-            (queued_cutoff, direct_cutoff),
+            (recover_queued, queued_cutoff, direct_cutoff),
         ).fetchall()
         for job in expired:
             conn.execute(

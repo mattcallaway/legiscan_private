@@ -7,12 +7,19 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from notifications import (
-    MailError, Notifications, preferences_sync, read_notification_watchlists,
+    MailError, Notifications, normalize_email, preferences_sync, read_notification_watchlists,
     send_resend, snapshot_statuses,
 )
 
 
 class NotificationTests(TestCase):
+    def test_email_addresses_validate_local_and_domain_labels(self):
+        self.assertEqual(normalize_email(" susan+tracker@EXAMPLE.COM "), "susan+tracker@example.com")
+        for value in ("a b@example.com", "a\nb@example.com", "a@example/com", "a@-example.com",
+                      "a@example..com", "a..b@example.com", "a" * 65 + "@example.com"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_email(value)
+
     def test_status_baseline_changes_and_removal(self):
         old = {"1": "0", "2": "1", "3": "2"}
         current = {"1": {"status": 1}, "2": {"status": "Unknown"}, "4": {"status": "5"}}
@@ -99,13 +106,26 @@ class PostgresNotificationTests(TestCase):
                 self.assertEqual(mailer.call_args.kwargs["key"], original_key)
                 self.assertIn("Introduced to Engrossed", mailer.call_args.kwargs["body"])
                 self.assertEqual(service.process(root), (0, 0))
+                service.set_activity_types("legacy:ana", ["hearings", "amendments", "committees"])
+                workspaces = read_notification_watchlists(root)
+                details = {"bill_number": "AB101", "status": 2, "latest_doc_id": 1,
+                           "committee": "Rules", "hearings": []}
+                self.assertEqual(service.capture_status_changes(workspaces, lambda _: {"101": details}), 0)
+                details.update(latest_doc_id=2, committee="Appropriations",
+                               hearings=[{"date": "2999-12-31", "description": "Budget hearing"}])
+                self.assertEqual(service.capture_status_changes(workspaces, lambda _: {"101": details}), 3)
+                service.set_activity_types("legacy:ana", ["hearings", "amendments"])
+                self.assertEqual(service.deliver_pending(root), 2)
+                self.assertEqual(service.capture_status_changes(workspaces, lambda _: {"101": details}), 0)
+                subjects = {call.kwargs["subject"] for call in mailer.call_args_list[-2:]}
+                self.assertEqual(subjects, {"AB101: Hearing calendar changed", "AB101: Bill text version changed"})
                 update_status(3)
                 self.assertEqual(service.capture_status_changes(
                     read_notification_watchlists(root), lambda watched: snapshot_statuses(root, watched),
                 ), 1)
                 watches.write_text("[]", encoding="utf-8")
                 self.assertEqual(service.deliver_pending(root), 0)
-                self.assertEqual(mailer.call_count, 3)
+                self.assertEqual(mailer.call_count, 5)
                 service.set_enabled("legacy:ana", False)
                 self.assertFalse(service.get_preferences("legacy:ana")["enabled"])
         finally:

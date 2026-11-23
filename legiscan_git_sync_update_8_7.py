@@ -1,5 +1,7 @@
-from notifications import Notifications, STATUS_LABELS, account_owner, enabled_config
-from hearing_calendar import export_calendar
+from notifications import STATUS_LABELS
+from tracker_pages import (
+    render_dashboard, render_email_notifications, render_hearing_calendar, render_historical_coverage,
+)
 from service_terms import CALIFORNIA_SOURCE, fetch_congress_member_terms, vote_service_status
 import requests
 from collections import Counter
@@ -22,7 +24,7 @@ from bill_workspace import export_workspace, read_workspace, reattach_profile_no
 from bill_research import amendment_diff, bill_revision, build_review_queue, changed_fields, parse_topic_rules, topic_match_reason
 
 from job_manager import JobManager
-from job_runner import current_session, run_bootstrap_job, run_calendar_refresh, run_refresh_job, run_rescan_job, sync_selected_sessions
+from job_runner import current_session, run_bootstrap_job, run_refresh_job, run_rescan_job, sync_selected_sessions
 from staff_manager import StaffManager, resolve_legislator, normalize_name_components
 
 # Configure logging
@@ -37,7 +39,7 @@ def sync_with_remote():
     """Run github sync asynchronously."""
     threading.Thread(target=_sync_with_remote, daemon=True).start()
 
-from legiscanner          import run_scan, CSV_FILE, KEYWORDS_FILE
+from legiscanner          import run_scan, CSV_FILE, KEYWORDS_FILE, load_keywords, normalize_keywords
 
 # ── Corpus manager (Layer A — master bill corpus) ─────────────────────────────
 # Guarded import: if corpus_manager.py is absent the app falls back gracefully.
@@ -94,6 +96,7 @@ FEDERAL_TYPES = {
     'FEDERAL_AGENCY': 'Federal Agency Rules/Regulations'
 }
 
+STATUS_LABEL_FILE = os.path.join(_user_data_dir, "status_labels.json")
 STATUS_LEGEND = dict(STATUS_LABELS)
 
 # ─── Session-state defaults ───────────────────────────────────────────────────
@@ -101,23 +104,11 @@ _STATE_DEFAULTS = {
     "selected_states":       [],
     "selected_federal_types":[],
     "status_options":        None,   # initialised after CSV load
-    "friendly_status_options": None,
-    "friendly_to_code":      None,
     "active_view_name":      None,
 }
 for _k, _v in _STATE_DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
-
-
-# ─── Status helpers ───────────────────────────────────────────────────────────
-def regenerate_friendly_status_options():
-    st.session_state.friendly_status_options = [
-        f"{STATUS_LEGEND.get(s, s)} [{s}]" for s in st.session_state.status_options
-    ]
-    st.session_state.friendly_to_code = {
-        f"{STATUS_LEGEND.get(s, s)} [{s}]": s for s in st.session_state.status_options
-    }
 
 
 # ─── Jurisdiction helpers ─────────────────────────────────────────────────────
@@ -171,32 +162,14 @@ def load_data(snapshot_revision):
         return pd.DataFrame()
 
 
-@st.cache_data
-def load_keywords():
-    try:
-        if os.path.exists(KEYWORDS_FILE):
-            with open(KEYWORDS_FILE, "r") as f:
-                return json.load(f)
-        return ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
-    except Exception as e:
-        logger.error(f"Error loading keywords: {e}")
-        return ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
-
-
 def save_keywords(keywords):
-    """Write atomically THEN sync."""
-    try:
-        tmp_file = KEYWORDS_FILE + ".tmp"
-        with open(tmp_file, "w") as f:
-            json.dump(sorted(set(keywords)), f)
-        os.replace(tmp_file, KEYWORDS_FILE)
-        sync_with_remote()
-        load_keywords.clear()
-        return True
-    except Exception as e:
-        logger.error(f"Error saving keywords: {e}")
-        st.error(f"Error saving keywords: {e}")
-        return False
+    """Replace the shared keyword file atomically."""
+    destination = Path(KEYWORDS_FILE)
+    with TemporaryDirectory(dir=destination.parent) as temporary:
+        candidate = Path(temporary) / destination.name
+        candidate.write_text(json.dumps(normalize_keywords(keywords), indent=2) + "\n", encoding="utf-8")
+        candidate.replace(destination)
+
 
 
 def load_saved_views():
@@ -334,9 +307,9 @@ def search_df(df: pd.DataFrame, query: str) -> pd.DataFrame:
 
 
 def filter_bill_keywords(frame, selected):
-    selected = set(selected)
+    selected = {entry.casefold() for entry in normalize_keywords(list(selected))}
     return frame[frame["keyword"].fillna("").map(
-        lambda entries: any(entry.strip() in selected for entry in entries.split(";"))
+        lambda entries: any(entry.casefold() in selected for entry in normalize_keywords(entries.split(";")))
     )]
 
 
@@ -373,6 +346,25 @@ def apply_sort(df: pd.DataFrame, sort_key: str) -> pd.DataFrame:
 
 
 # ─── Corpus helpers ───────────────────────────────────────────────────────────
+@st.cache_data(ttl=60, max_entries=32, show_spinner=False)
+def load_corpus_filter_options(db_path, revision, include_facets, _corpus):
+    statuses = get_corpus_status_options(_corpus)
+    sponsors, committees = _corpus.get_filter_options() if include_facets else ([], [])
+    return statuses, sponsors, committees
+
+
+def corpus_revision(db_path):
+    revision = []
+    for filename in (db_path, f"{db_path}-wal"):
+        try:
+            state = Path(filename).stat()
+            revision.append((state.st_mtime_ns, state.st_size))
+        except FileNotFoundError:
+            revision.append(None)
+    return revision
+
+
+
 def get_corpus_status_options(corpus) -> list:
     """Distinct status_stage values from corpus DB (used in All Bills tab)."""
     if corpus is None:
@@ -903,7 +895,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ─── Load application data ────────────────────────────────────────────────────
 try:
-    keywords_list = load_keywords()
+    try:
+        keywords_list = load_keywords()
+    except (OSError, ValueError) as error:
+        st.sidebar.error(f"Could not read shared keywords: {error}")
+        keywords_list = []
+    STATUS_LEGEND.update(load_bill_workspace(STATUS_LABEL_FILE, {}))
     tracked_bills = [str(item) for item in load_bill_workspace(TRACKED_FILE, [])]
     bill_notes    = load_bill_workspace(NOTES_FILE, {})
     try:
@@ -990,7 +987,7 @@ global_search = st.sidebar.text_input(
 )
 st.session_state.global_search = global_search
 
-view_modes = ["🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "Topic Inbox",
+view_modes = ["Dashboard", "🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "Topic Inbox",
               "Hearing Calendar", "Historical Coverage", "👔 Legislator Directory", "Federal Voting Profiles", "🛠️ Staff Analytics"]
 queue_preferences = {}
 if not _auth.is_guest():
@@ -1057,6 +1054,8 @@ with _view_tabs2:
                 for k, v in saved_views[_sel_custom].items():
                     if k != "saved_at":
                         st.session_state[k] = v
+                        if k == "global_status":
+                            st.session_state.pop("global_status_input", None)
                 st.rerun()
         with _cvcol2:
             if st.button("Delete Context", key="del_custom_btn"):
@@ -1102,9 +1101,10 @@ _all_status_opts = []
 _all_sponsors = []
 _all_committees = []
 if corpus:
-    _all_status_opts = get_corpus_status_options(corpus)
-    if "All Bills" in app_mode:
-        _all_sponsors, _all_committees = corpus.get_filter_options()
+    corpus_path = os.path.join(DATA_DIR, "bills.db")
+    _all_status_opts, _all_sponsors, _all_committees = load_corpus_filter_options(
+        corpus_path, corpus_revision(corpus_path), "All Bills" in app_mode, corpus,
+    )
 if not df.empty:
     _csv_stats = df["status_stage"].dropna().astype(str).unique().tolist() if "status_stage" in df.columns else []
     for s in _csv_stats:
@@ -1119,9 +1119,8 @@ if not df.empty:
     if "committees" in df.columns:
         _all_committees = set(_all_committees) | set(df["committees"].dropna().astype(str))
 
-if st.session_state.status_options is None or len(st.session_state.status_options) < len(_all_status_opts):
-    st.session_state.status_options = list(_all_status_opts)
-    regenerate_friendly_status_options()
+status_options = list(dict.fromkeys([*_all_status_opts, *STATUS_LEGEND]))
+st.session_state.status_options = status_options
 
 global_jur = st.sidebar.multiselect(
     "Jurisdiction",
@@ -1131,15 +1130,13 @@ global_jur = st.sidebar.multiselect(
 )
 st.session_state.global_jur = global_jur
 
-_f_opts = [f"{STATUS_LEGEND.get(s, s)} [{s}]" for s in st.session_state.status_options]
-_f2c    = {f"{STATUS_LEGEND.get(s, s)} [{s}]": s for s in st.session_state.status_options}
-_stat_sel = st.sidebar.multiselect(
+st.session_state.global_status = st.sidebar.multiselect(
     "Status Stage",
-    options=_f_opts,
-    default=st.session_state.get("global_status_friendly", []),
-    key="global_status_friendly"
+    options=status_options,
+    default=[code for code in st.session_state.get("global_status", []) if code in status_options],
+    format_func=lambda code: f"{STATUS_LEGEND.get(code, code)} [{code}]",
+    key="global_status_input",
 )
-st.session_state.global_status = [_f2c[f] for f in _stat_sel]
 
 global_date_range = st.sidebar.date_input(
     "Status Date Range",
@@ -1168,11 +1165,15 @@ st.sidebar.divider()
 
 # ── D. ADVANCED FILTERS (Expander) ───────────────────────────────────────────
 with st.sidebar.expander("🛠️ Advanced Filters"):
-    _avail_kw = sorted(df["keyword"].dropna().unique()) if not df.empty and "keyword" in df.columns else keywords_list
+    snapshot_keywords = df["keyword"].dropna().unique().tolist() if not df.empty and "keyword" in df.columns else []
+    _avail_kw = sorted(normalize_keywords([*keywords_list, *snapshot_keywords]), key=str.casefold)
+    keyword_by_key = {entry.casefold(): entry for entry in _avail_kw}
+    selected_keywords = normalize_keywords(list(st.session_state.get("kw_filter", [])))
+    active_keywords = [keyword_by_key[entry.casefold()] for entry in selected_keywords if entry.casefold() in keyword_by_key]
     kw_filter = st.multiselect(
         "Keyword Meta-Tags",
         options=_avail_kw,
-        default=st.session_state.get("kw_filter", []),
+        default=active_keywords,
         key="kw_filter_input"
     )
     st.session_state.kw_filter = kw_filter
@@ -1194,15 +1195,20 @@ with st.sidebar.expander("🛠️ Advanced Filters"):
     st.session_state.tracked_prio = tracked_prio
 
     st.write("---")
-    _ns_code  = st.text_input("New Custom Status Code", key="new_status_code")
-    _ns_label = st.text_input("New Status Label",       key="new_status_label")
-    if st.button("Add Status", key="add_status_btn"):
-        if _ns_code and _ns_code not in st.session_state.status_options:
-            st.session_state.status_options.append(_ns_code)
-            STATUS_LEGEND[_ns_code] = _ns_label or _ns_code
-            regenerate_friendly_status_options()
-            st.success(f"Added status {_ns_code}: {_ns_label}")
-            st.rerun()
+    with st.form("custom_status_labels"):
+        _ns_code = st.text_input("Custom Status Code", key="new_status_code", max_chars=32).strip()
+        _ns_label = st.text_input("Custom Status Label", key="new_status_label", max_chars=80).strip()
+        if st.form_submit_button("Save Status Label"):
+            if not _ns_code or not _ns_label:
+                st.error("Enter both a status code and a label.")
+            else:
+                try:
+                    update_workspace(STATUS_LABEL_FILE, {}, lambda labels: labels.update({_ns_code: _ns_label}))
+                except (OSError, ValueError, sqlite3.Error) as error:
+                    st.error(f"Could not save the status label: {error}")
+                else:
+                    st.rerun()
+
 
 # ── E. MODE-SPECIFIC OVERLAYS ──────────────────────────────────────────────────
 if "⭐ Tracked Bills" in app_mode:
@@ -1457,6 +1463,15 @@ with st.sidebar.expander("⚙️ Admin & Database Tools"):
 
         st.header("🔄 Keyword Rescan")
         st.caption("Scans the API for bills mentioning monitored keywords.")
+        with st.form("shared_keywords"):
+            edited_keywords = st.text_area("Shared keywords, one per line", value="\n".join(keywords_list))
+            if st.form_submit_button("Save shared keywords"):
+                try:
+                    save_keywords(edited_keywords.splitlines())
+                except (OSError, ValueError) as error:
+                    st.error(f"Could not save shared keywords: {error}")
+                else:
+                    st.rerun()
         _rescan_states = st.multiselect(
             "States", options=sorted(US_STATES.values()),
             default=["California"], key="rescan_states"
@@ -1641,7 +1656,7 @@ def clear_bill_filters():
     for field in (
         "global_jur", "global_status", "global_sponsors", "global_committees",
         "global_date_range", "kw_filter", "tracked_pos", "tracked_prio", "global_search",
-        "global_status_friendly", "tracked_quick",
+        "global_status_input", "tracked_quick",
     ):
         st.session_state.pop(field, None)
         st.session_state.pop(f"{field}_input", None)
@@ -1910,7 +1925,12 @@ def run_unified_filters(work_df):
 
 
 # ────────── ALL BILLS ─────────────────────────────────────────────────────────
-if "All Bills" in app_mode:
+if app_mode == "Dashboard":
+    def open_view(choice):
+        st.session_state.app_mode = choice
+
+    render_dashboard(len(tracked_bills), len(load_bill_workspace(TOPICS_FILE, [])), view_modes, open_view)
+elif "All Bills" in app_mode:
     if not _CORPUS_AVAILABLE or not corpus:
         st.warning("Master Corpus SQLite not responding.")
     else:
@@ -1975,186 +1995,20 @@ if "All Bills" in app_mode:
 
 
 elif app_mode == "Email Notifications" and not _auth.is_guest():
-    st.subheader("Email Notifications")
-    st.caption("Get an email when the tracker detects a status change on a bill you track.")
-    if not enabled_config():
-        st.info("Email alerts are unavailable until PostgreSQL and Resend are configured on the host.")
-    else:
-        owner = account_owner(_username, _current_user)
-        try:
-            notifications = Notifications.from_environment()
-            preferences = notifications.get_preferences(owner)
-        except Exception as error:
-            logger.warning("Notification preferences unavailable: %s", type(error).__name__)
-            st.error("Email preferences could not be loaded. Contact the tracker administrator.")
-        else:
-            verified = preferences.get("email")
-            if verified:
-                status = "Active" if preferences["enabled"] else "Paused"
-                st.write(f"{status} | {verified}")
-                label = "Pause status alerts" if preferences["enabled"] else "Resume status alerts"
-                if st.button(label, key="toggle_status_emails"):
-                    try:
-                        notifications.set_enabled(owner, not preferences["enabled"])
-                    except Exception as error:
-                        logger.warning("Notification preference update failed: %s", type(error).__name__)
-                        st.error("Could not update your alert preference.")
-                    else:
-                        st.rerun()
-
-            with st.form("notification_address_form"):
-                destination = st.text_input("Email address", value=verified or "", max_chars=254)
-                if st.form_submit_button("Send verification code"):
-                    try:
-                        notifications.request_verification(owner, destination)
-                    except ValueError as error:
-                        st.warning(str(error))
-                    except Exception as error:
-                        logger.warning("Notification verification email failed: %s", type(error).__name__)
-                        st.error("Could not send the verification email. Try again in 10 minutes.")
-                    else:
-                        st.toast("Verification email requested")
-                        st.rerun()
-
-            if preferences.get("pending_email"):
-                with st.form("notification_code_form", clear_on_submit=True):
-                    code = st.text_input("Verification code", max_chars=80)
-                    if st.form_submit_button("Verify and enable alerts"):
-                        try:
-                            notifications.verify(owner, code)
-                        except ValueError as error:
-                            st.warning(str(error))
-                        except Exception as error:
-                            logger.warning("Notification code verification failed: %s", type(error).__name__)
-                            st.error("Could not verify the email address.")
-                        else:
-                            st.toast("Bill status alerts enabled")
-                            st.rerun()
-            st.caption("Alerts start with future status changes detected by the notification worker.")
+    render_email_notifications(_username, _current_user)
 
 
 elif app_mode == "Hearing Calendar":
-    st.subheader("Hearing Calendar")
-    st.button("Reload calendar", key="reload_hearing_calendar")
-    refresh_notice = st.session_state.pop(f"hearing_refresh_notice:{_username}", None)
-    if refresh_notice is not None:
-        if refresh_notice["errors"]:
-            st.warning(f'{refresh_notice["errors"]} source requests failed. Existing snapshots were retained.')
-        st.success(f'{refresh_notice["new"] + refresh_notice["updated"]} snapshots updated. '
-                   f'{refresh_notice["unavailable"]} bills supplied no usable schedule.')
-    if not corpus:
-        st.info("The calendar database is unavailable.")
-    elif not tracked_bills:
-        st.info("Track a bill to see its published hearings and scheduled events here.")
-    else:
-        ids = [bill for bill in tracked_bills if bill.isascii() and bill.isdecimal()]
-        calendars = corpus.get_bill_calendars(ids)
-        st.caption(f"Source calendar snapshots available for {len(calendars):,} of {len(ids):,} tracked bills.")
-        current = date.today()
-        horizon = st.selectbox("Show events in the next", [7, 30, 60, 90], index=1,
-                               format_func=lambda days: f"{days} days", key="hearing_window")
-        include_cancelled = st.checkbox("Show explicitly canceled events", key="show_canceled_hearings")
-        events = sorted((
-            event for calendar in calendars.values() for event in calendar["events"]
-            if current.isoformat() <= event["date"] <= (current + timedelta(days=horizon - 1)).isoformat()
-            and (include_cancelled or not event["cancelled"])
-        ), key=lambda event: (event["date"], event["time"], event["bill_number"]))
-        if events:
-            jurisdictions = sorted({event["jurisdiction"] or "Unknown" for event in events})
-            scope = st.multiselect("Jurisdictions", jurisdictions, key="hearing_jurisdiction")
-            visible = [event for event in events if not scope or (event["jurisdiction"] or "Unknown") in scope]
-            table = pd.DataFrame([{
-                "Date": event["date"], "Source time": event["time"] or "Unspecified",
-                "Bill": event["bill_number"], "Jurisdiction": event["jurisdiction"],
-                "Event": event["type"], "Location": event["location"], "Details": event["description"],
-                "Canceled in source": event["cancelled"],
-                "Snapshot (UTC)": event["fetched_at"][:16].replace("T", " "),
-            } for event in visible])
-            st.dataframe(table, hide_index=True)
-            choices = {event["event_id"]: event for event in visible}
-            selected = st.selectbox(
-                "Event details", list(choices), key="hearing_event",
-                format_func=lambda key: f'{choices[key]["date"]} | {choices[key]["bill_number"]} | {choices[key]["type"]}',
-            )
-            if selected:
-                event = choices[selected]
-                if event["source_url"]:
-                    st.link_button("Open source bill", event["source_url"])
-                st.button("Open bill in tracker", on_click=open_profile_bill,
-                          args=(event["bill_id"], event["bill_number"]), key="open_hearing_bill")
-            if any(not event["cancelled"] for event in visible):
-                st.download_button("Download calendar (.ics)", export_calendar(visible),
-                                   "tracked-bill-events.ics", "text/calendar")
-                st.caption("Calendar exports use all-day markers. Any reported time is included in the description because the feed does not specify a time zone.")
-        else:
-            st.info("No upcoming events appear in the available snapshots for this date range.")
-        st.caption("Check the source bill for schedule changes. When an event drops out of a source update, it leaves this calendar without a cancellation label.")
-
-        if job_manager and (_auth.is_admin() or _current_user.get("api_key")):
-            with st.expander("Refresh tracked-bill calendars"):
-                tracked = get_tracked_bills_df(ids, corpus, df)
-                labels = {label: code for code, label in US_STATES.items()}
-                labels["U.S. Congress"] = "US"
-                bills = {
-                    str(row["bill_id"]): {
-                        "bill_id": str(row["bill_id"]),
-                        "jurisdiction": labels.get(row.get("jurisdiction_name"), ""),
-                        **{key: row[key] if isinstance(row.get(key), str) else "" for key in ("bill_number", "title", "url")},
-                    }
-                    for row in tracked.to_dict("records")
-                }
-                batch = corpus.calendar_refresh_candidates(bills)
-                if not batch:
-                    st.caption("Calendars already checked in the past 30 minutes are skipped.")
-                if st.button("Check up to 25 tracked bills", key="refresh_hearing_calendars", disabled=not batch):
-                    use_worker = _auth.is_admin() and os.environ.get("LEGISCAN_BACKGROUND_JOBS", "").lower() in {"1", "true", "yes"}
-                    try:
-                        if use_worker:
-                            job_manager.enqueue_job(
-                                "calendar_refresh", "", "WATCHLIST", {"bills": batch}, initiated_by=_username,
-                            )
-                            st.success("Calendar refresh queued. Check Recent Jobs in the admin tools for progress.")
-                        else:
-                            status = st.progress(0, text="Checking source calendars...")
-                            stats = run_calendar_refresh(
-                                corpus, batch, job_manager,
-                                lambda fraction, message: status.progress(fraction, text=message), initiated_by=_username,
-                            )
-                            status.empty()
-                            st.session_state[f"hearing_refresh_notice:{_username}"] = stats
-                            st.rerun()
-                    except Exception as error:
-                        st.error(f"Calendar refresh could not be completed: {error}")
+    render_hearing_calendar(
+        corpus, tracked_bills, job_manager, _username,
+        is_admin=_auth.is_admin(), has_personal_key=bool(_current_user.get("api_key")),
+        load_tracked_rows=lambda ids: get_tracked_bills_df(ids, corpus, df),
+        open_bill=open_profile_bill,
+    )
 
 
 elif app_mode == "Historical Coverage":
-    st.subheader("Historical Coverage")
-    if corpus is None:
-        st.info("The corpus database is unavailable.")
-    else:
-        coverage = corpus.get_historical_coverage()
-        if coverage.empty:
-            st.info("No California or congressional sessions have been discovered yet.")
-        else:
-            jurisdictions = st.multiselect("Jurisdictions", ["California", "U.S. Congress"],
-                                           default=["California", "U.S. Congress"], key="coverage_scope")
-            coverage["Jurisdiction"] = coverage["jurisdiction"].map({"CA": "California", "US": "U.S. Congress"})
-            coverage = coverage[coverage["Jurisdiction"].isin(jurisdictions)].copy()
-            coverage["Last complete import"] = coverage["last_bootstrap"]
-            coverage["Last complete refresh"] = coverage["last_masterlist"]
-            columns = {
-                "session_name": "Session", "bills": "Bills indexed",
-                "bills_with_text": "Bills with text reference",
-                "bills_with_cached_text": "Bills with cached text or PDF link",
-                "roll_calls": "Roll calls",
-                "with_individual_votes": "Roll calls with individual votes",
-            }
-            st.dataframe(coverage.rename(columns=columns)[[
-                "Jurisdiction", "Session", "Last complete import", "Last complete refresh",
-                "Bills indexed", "Bills with text reference", "Bills with cached text or PDF link",
-                "Roll calls", "Roll calls with individual votes",
-            ]], hide_index=True)
-        st.caption("Admins can add older sessions under Manual session import and refresh.")
+    render_historical_coverage(corpus)
 
 
 # ────────── KEYWORD MATCHES ───────────────────────────────────────────────────

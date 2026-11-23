@@ -53,12 +53,27 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_KEYWORDS = ("climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest")
+
+
+def normalize_keywords(values):
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        raise ValueError("Keywords must be a JSON list of strings.")
+    unique = {}
+    for value in values:
+        value = " ".join(value.split())
+        if value:
+            unique.setdefault(value.casefold(), value)
+    return list(unique.values())
+
+
 def load_keywords(filepath=KEYWORDS_FILE):
-    if not os.path.exists(filepath):
-        logger.warning(f"Keywords file not found at {filepath}, using defaults.")
-        return ["climate", "transportation", "PFAS", "water", "CEQA", "energy", "forest"]
-    with open(filepath, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    try:
+        with open(filepath, encoding="utf-8") as source:
+            return normalize_keywords(json.load(source))
+    except FileNotFoundError:
+        return list(DEFAULT_KEYWORDS)
+
 
 
 def load_cache(filepath=CACHE_FILE):
@@ -236,7 +251,9 @@ def run_scan(states=None, data_dir=None, corpus_manager=None):
             for item in searches:
                 bid      = str(item['bill_id'])
                 new_hash = item['change_hash']
-                old_hash = existing_bills.get(bid, {}).get('change_hash') or cache.get(bid, {}).get('change_hash')
+                previous = existing_bills.get(bid, {})
+                previous_keywords = previous.get("keyword", "").split(";")
+                old_hash = previous.get("change_hash") or cache.get(bid, {}).get("change_hash")
                 if bid not in existing_bills or not new_hash or new_hash != old_hash:
                     stats["api_calls"] += 1
                     details = get_bill_details(bid)
@@ -257,6 +274,7 @@ def run_scan(states=None, data_dir=None, corpus_manager=None):
                     row["change_hash"] = new_hash
                     existing_bills[bid] = row
                     cache[bid] = {'change_hash': new_hash, 'last_checked': datetime.now().isoformat()}
+                existing_bills[bid]["keyword"] = "; ".join(normalize_keywords([*previous_keywords, keyword]))
                 if corpus_manager is not None:
                     corpus_manager.record_keyword_match(int(bid), keyword)
 

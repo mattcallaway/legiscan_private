@@ -23,7 +23,8 @@
       "engine": "PostgreSQL",
       "ci_version": "16",
       "optional": true
-    }
+    },
+    "locked_dependencies_manifest": "../requirements.lock"
   },
   "entrypoints": {
     "app": [
@@ -54,6 +55,10 @@
       "python",
       "tools/generate_techmap.py",
       "--check"
+    ],
+    "browser_smoke": [
+      "python",
+      "tools/smoke_browser.py"
     ]
   },
   "platforms": {
@@ -239,7 +244,7 @@
       "endpoint": "https://api.resend.com/emails",
       "credential": "RESEND_API_KEY",
       "verified_sender_setting": "RESEND_FROM_EMAIL",
-      "purpose": "Account email verification and tracked bill status alerts"
+      "purpose": "Mailbox verification and opt-in bill status, hearing, text-version, and committee alerts"
     },
     "git": {
       "optional": true,

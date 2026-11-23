@@ -225,6 +225,9 @@ CREATE INDEX IF NOT EXISTS idx_bills_jurisdiction ON bills(jurisdiction);
 CREATE INDEX IF NOT EXISTS idx_bills_number       ON bills(bill_number);
 CREATE INDEX IF NOT EXISTS idx_bills_status       ON bills(status_stage);
 CREATE INDEX IF NOT EXISTS idx_bills_session      ON bills(session_id);
+CREATE INDEX IF NOT EXISTS idx_bills_session_status_page ON bills(session_id, status_date DESC, bill_id);
+CREATE INDEX IF NOT EXISTS idx_bills_session_action_page ON bills(session_id, last_action_date DESC, bill_id);
+CREATE INDEX IF NOT EXISTS idx_bills_status_day ON bills(substr(status_date, 1, 10));
 
 CREATE TABLE IF NOT EXISTS keyword_matches (
     bill_id    INTEGER  NOT NULL,
@@ -1246,9 +1249,9 @@ class CorpusManager:
             placeholders = ",".join("?" * len(keyword_filter))
             conditions.append(
                 f"EXISTS (SELECT 1 FROM keyword_matches km "
-                f"WHERE km.bill_id = b.bill_id AND km.keyword IN ({placeholders}))"
+                f"WHERE km.bill_id = b.bill_id AND casefold(km.keyword) IN ({placeholders}))"
             )
-            params.extend(keyword_filter)
+            params.extend(keyword.casefold() for keyword in keyword_filter)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 

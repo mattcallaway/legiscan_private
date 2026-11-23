@@ -34,7 +34,7 @@ Example. Build a housing portfolio by creating a private topic with phrases like
 
 **Hearing Calendar** displays published events for watched bills with source snapshot times. Use **Refresh tracked-bill calendars** when available to backfill missing snapshots using an admin account or personal LegiScan key. Export calendar markers as iCalendar. The feed does not provide reliable timezones, so exported events are date-only. When the source lists a time it can appear in the description. Confirm attendance details with the Legislature.
 
-Go to **Email Notifications** while signed in. Enter an address, request a verification code, enter it within 20 minutes, and enable alerts. A ten-minute resend throttle can apply. Pause or resume alerts from the same page. The first delivery pass establishes status baselines. Later passes send status changes observed on tracked bills. If several changes occur between passes, an alert can reflect the latest one. Removing a bill from your watchlist makes it ineligible for later delivery when the sender checks it. Use the bill details and Daily Review to see changes independent of email.
+Go to **Email Notifications** while signed in. Enter an address, request a verification code, enter it within 20 minutes, and enable alerts. A ten-minute resend throttle can apply. Pause or resume alerts from the same page. The first delivery pass establishes status baselines. Later passes send status changes observed on tracked bills. If several changes occur between passes, an alert can reflect the latest one. Removing a bill from your watchlist makes it ineligible for later delivery when the sender checks it. Use **Additional alerts** to opt into hearing calendar changes, newly indexed bill text versions, or committee changes. The first observed value establishes a baseline for each enabled category. Hearing alerts cover upcoming additions and removals from published snapshots. Treat disappeared calendar entries as a prompt to confirm with the official source. Use bill details and Daily Review for other changes.
 
 ### Research historical records and policymakers
 
@@ -135,7 +135,7 @@ For optional publication, configure `REPO_DIR` as a normal existing Git checkout
    Run those commands in an administrator's interactive `psql` session. The password command prompts for the value. Use a provider-supplied DSN or a PostgreSQL URI such as `postgresql://tracker_notifications:PERCENT_ENCODED_PASSWORD@localhost:5432/tracker_notifications`. Encode reserved password characters for URI syntax.
 
 3. In Resend, add a domain or sending subdomain you control. Publish the DNS records Resend specifies and wait for verification. Create a sending key scoped to the verified domain where supported. Choose the sender address on that domain and a test recipient mailbox you control. [Resend domain setup](https://resend.com/docs/dashboard/domains/introduction) · [Resend API keys](https://resend.com/docs/dashboard/api-keys/introduction)
-4. Set `NOTIFICATION_DATABASE_URL`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` on the app and sender. Give the sender the same persistent `DATA_DIR` as the app. Run schema initialization from the source checkout using the environment's Python.
+4. Set `NOTIFICATION_DATABASE_URL`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` on the app and sender. Give the sender the same persistent `DATA_DIR` as the app. Run schema initialization from the source checkout using the environment's Python. Run it again during upgrades that add notification categories, before restarting the app and sender.
 
    ```powershell
    $env:NOTIFICATION_DATABASE_URL = 'postgresql://tracker_notifications:PERCENT_ENCODED_PASSWORD@localhost:5432/tracker_notifications'
@@ -274,7 +274,9 @@ Schedule incremental refreshes with a cadence that fits quota and the upstream u
 | Git publication rejected | Check upstream access, the allowlisted paths and pending commit inventory. Private backups continue through the filesystem and PostgreSQL procedure. |
 | State seems gone after deploy | Verify the original mount, data directory and identity. A changed directory can start a new empty instance. |
 
-Run the following from the checkout using the installed environment.
+The app starts at **Dashboard** with shortcuts for discovery, monitoring, and policymaker research. Save private status labels under **Advanced Filters**. Status filters continue to use the underlying provider codes. Admins edit the shared keyword list in **Keyword Rescan**. Save one phrase per line, then rescan to collect new matches. Prior matches remain indexed for historical research.
+
+For repeatable Python 3.12 builds, install the hash-checked cross-platform lock with `python -m pip install --require-hashes -r requirements.lock`. Update it using `uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes --output-file requirements.lock`. Run the following from the checkout using the installed environment.
 
 ```sh
 python -m pip check
@@ -282,5 +284,7 @@ python -m unittest discover -s tests -v
 python cli.py --help
 python tools/generate_techmap.py --check
 ```
+
+CI also runs undefined-name lint checks and an isolated Playwright smoke test. To run them locally, install Ruff 0.15.0 and Playwright 1.58.0, run `python -m ruff check --select F821,F822,F823 .`, install Chromium with `python -m playwright install chromium`, and run `python tools/smoke_browser.py`. The script starts a loopback app with temporary data, checks health and navigates to Historical Coverage using a guest browser session. [Playwright CI setup](https://playwright.dev/python/docs/ci)
 
 The PostgreSQL test is conditional on `TEST_NOTIFICATION_DATABASE_URL`. Use a dedicated scratch database and test role. The [CI workflow](.github/workflows/regression.yml) provisions PostgreSQL 16 and Python 3.12. This guide gives cross-platform procedures. Verify hosting, proxy and mail behavior for your chosen target with controlled data before opening a production instance.

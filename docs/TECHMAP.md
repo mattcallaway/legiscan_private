@@ -39,6 +39,7 @@ flowchart LR
 | Source | Responsibility and boundaries |
 | --- | --- |
 | [legiscan_git_sync_update_8_7.py](../legiscan_git_sync_update_8_7.py) | Current Streamlit entry point. Sidebar state, page dispatch, filters, billing cards, review and profile controls. Top-level code reruns during interaction. Manager factories and cached reads sit at the UI boundary. |
+| [tracker_pages.py](../tracker_pages.py) | Dashboard shortcuts, email preferences, hearing calendar, and historical coverage views. The current entry point owns route selection and workspace context. |
 | [cli.py](../cli.py) | Headless parsing and exit codes. Executes sync, queue worker, PostgreSQL schema setup and a single email sweep. |
 | [config.py](../config.py) | Resolves filesystem paths and shared LegiScan key when imported. The effective environment must exist before startup. |
 | [auth.py](../auth.py) | Account file, password hashing, active Streamlit identity, roles, account settings, guest lifecycle and workspace directory resolution. |
@@ -66,7 +67,7 @@ flowchart LR
 | `DATA_DIR/users.json` | Auth account records. New users have durable opaque workspace IDs. Existing accounts keep their legacy resolution. Account records can contain user-supplied keys. |
 | `DATA_DIR/workspaces/<workspace_id>/` and `DATA_DIR/users/<username>/` | New and legacy workspace locations. Guest paths are temporary. The email watcher resolves registered paths from the account store. |
 | `.bill-workspace.sqlite3` per workspace | Filename-keyed workspace records backed by SQLite, with recovery copies of JSON files. Existing JSON-only data is read through compatibility handling. Preserve hidden files during backups. |
-| Workspace JSON and uploads | Tracked IDs, notes, saved views, topics, review queue, profile notes and private attachments. Attachment access resolves beneath the current user's upload directory. |
+| Workspace JSON and uploads | Tracked IDs, notes, saved views, topics, review queue, private status labels, profile notes and private attachments. Attachment access resolves beneath the current user's upload directory. |
 | `DATA_DIR/bills.db` | `sessions`, `sync_meta`, `bills`, `bill_texts`, `keyword_matches`, `roll_calls`, `legislator_votes`, `people`, `people_mapping`, and calendar snapshots/attempts. |
 | `DATA_DIR/staff.db` | Legislators, staff, issue and committee records, stable identity maps, roster snapshots, assignment history, service terms and import diagnostics. |
 | `DATA_DIR/jobs.db` | `system_jobs`, including queued request payload, lifecycle, progress, recovery and claim information. |
@@ -92,7 +93,7 @@ Use LegiScan bill IDs to join corpus, snapshots and watchlists. Use session ID p
 2. The bootstrap path gets a dataset list and the dataset ZIP, then ingests provider bill, person and vote files. Optional per-bill fallback requests `getMasterListRaw` then `getBill`. Direct CLI bootstrap can use fallback. Admin bulk controls and the queue's bulk route disable it.
 3. `refresh_session` requests the hash list, compares local rows and fetches changed bill records. Bill processing updates related calendar, text reference and vote data. `_process_bill_votes` and `_fetch_member_votes` retrieve missing eligible roll-call details. Successful partial updates can be reused by a retry. The freshness timestamp follows a successful full refresh.
 4. `run_bootstrap_job`, `run_refresh_job`, `run_calendar_refresh`, and `run_rescan_job` report progress and outcomes in `JobManager`. The budget context records upstream LegiScan request usage within a job.
-5. In background mode the UI calls `enqueue_job`. The CLI loops through `execute_next_job`, which claims an item with `claim_next_job`, updates heartbeat, dispatches according to job kind, and persists the outcome. Claims serialize conflicting ingestion work on an instance. The worker uses its own server credential and request environment.
+5. In background mode the UI calls `enqueue_job`. The CLI loops through `execute_next_job`, which claims an item with `claim_next_job`, updates heartbeat, dispatches according to job kind, and persists the outcome. Claims serialize conflicting ingestion work on an instance. The worker holds a separate SQLite writer lock through execution to prevent a live worker from being superseded solely by an expired heartbeat. The worker uses its own server credential and request environment.
 6. Historical import begins only after an explicit session selection. `get_historical_coverage` queries imported state, freshness and completeness. Keep current auto-discovery and manually initiated historical work distinct when adding a scheduler.
 
 ### Search, review, amendments and events
@@ -115,7 +116,7 @@ Use LegiScan bill IDs to join corpus, snapshots and watchlists. Use session ID p
 
 1. The signed-in UI derives an owner with `account_owner` and configures `Notifications.from_environment`. `request_verification` normalizes the mailbox, rate-limits requests, and stores expiring verification state. It submits the code via `send_resend`. `verify` validates the code and `set_enabled` controls the preference.
 2. `cli.py --task notifications` invokes `Notifications.process`. An advisory lock prevents simultaneous processing for the database. `read_notification_watchlists` reads account and private workspace membership. `snapshot_statuses` reads local bill state. This path does not call LegiScan.
-3. `capture_status_changes` establishes baselines and creates outbox rows for eligible changes. Status normalization uses canonical provider codes. The baseline and outbox updates share a PostgreSQL transaction.
+3. `capture_status_changes` establishes baselines and creates outbox rows for eligible changes. Status normalization uses canonical provider codes. The baseline and outbox updates share a PostgreSQL transaction. Opt-in activity categories compare upcoming hearing snapshots, latest document IDs and committee/referral fields independently. A newly enabled category establishes its own baseline.
 4. `deliver_pending` rechecks current account, preference, and tracked-bill eligibility. `send_resend` sends with a stable idempotency key. Provider acceptance and eventual delivery are separate events. Retry timing applies to transient failures. A resumed sender sees only the latest locally observed status where multiple changes occurred between sweeps.
 5. Keep PostgreSQL backup and filesystem state coordinated. Email configuration and schedule are separate from corpus ingestion. Use an isolated sender during restore tests to prevent delivering a restored backlog.
 
@@ -162,4 +163,4 @@ To inspect call sites programmatically, load `docs/techmap.json`, then find file
 
 - [Audit regression tests](../tests/test_audit_regressions.py) exercise focused app logic including staff import, historical coverage, job behavior, and private workflows.
 - [Notifications tests](../tests/test_notifications.py) exercise status and mail helpers plus a PostgreSQL integration test with isolated state and a test transport when configured.
-- [CI](../.github/workflows/regression.yml) installs dependencies on Python 3.12, configures PostgreSQL 16 and runs unittest. The repository has no deployment pipeline in that workflow. Production host and proxy behavior depend on the operator's environment.
+- [CI](../.github/workflows/regression.yml) installs dependencies on Python 3.12, configures PostgreSQL 16 and runs unittest. It checks the call inventory, runs a targeted lint pass, and launches an isolated Streamlit deployment for Playwright navigation. The repository has no deployment pipeline in that workflow. Production host and proxy behavior depend on the operator's environment.

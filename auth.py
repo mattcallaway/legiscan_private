@@ -90,6 +90,14 @@ def _save_users(users: dict) -> bool:
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
+def _password_error(password):
+    if len(password) < 6:
+        return "Password must be at least 6 characters."
+    if len(password.encode("utf-8")) > 72:
+        return "Password must be at most 72 bytes in UTF-8."
+    return None
+
+
 def _hash_password(plaintext: str) -> str:
     return bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode()
 
@@ -112,6 +120,10 @@ def get_current_user() -> dict | None:
     except RuntimeError:
         stored = None
     if stored is None or active.get("workspace_id") != stored.get("workspace_id"):
+        logout()
+        return None
+    revision = stored.get("credential_revision")
+    if active.get("credential_revision") != revision:
         logout()
         return None
     active["role"] = stored.get("role", "user")
@@ -145,8 +157,8 @@ def register_user(username: str, password: str, api_key: str = "") -> tuple[bool
         return False, "Username must be at least 3 characters."
     if not all(c.isalnum() or c in "-_" for c in username):
         return False, "Username may only contain letters, numbers, hyphens and underscores."
-    if len(password) < 6:
-        return False, "Password must be at least 6 characters."
+    if error := _password_error(password):
+        return False, error
 
     users = _load_users()
     if username in users:
@@ -174,12 +186,13 @@ def login_user(username: str, password: str) -> tuple[bool, str]:
     username = username.strip().lower()
     users = _load_users()
     u = users.get(username)
-    if u is None or not _check_password(password, u.get("password_hash", "")):
+    if u is None or len(password.encode("utf-8")) > 72 or not _check_password(password, u.get("password_hash", "")):
         return False, "Invalid username or password."
 
     st.session_state.auth_user = {
         "username":  username,
         "workspace_id": u.get("workspace_id"),
+        "credential_revision": u.get("credential_revision"),
         "role":      u.get("role", "user"),
         "api_key":   u.get("api_key", ""),
         "is_guest":  False,
@@ -204,13 +217,18 @@ def is_guest() -> bool:
 
 @_serialize_account_write
 def update_password(username: str, new_password: str) -> tuple[bool, str]:
-    if len(new_password) < 6:
-        return False, "Password must be at least 6 characters."
+    if error := _password_error(new_password):
+        return False, error
     users = _load_users()
     if username not in users:
         return False, "User not found."
     users[username]["password_hash"] = _hash_password(new_password)
+    users[username]["credential_revision"] = uuid4().hex
     ok = _save_users(users)
+    if ok:
+        active = st.session_state.get("auth_user")
+        if active and active.get("username") == username:
+            active["credential_revision"] = users[username]["credential_revision"]
     return (True, "Password updated.") if ok else (False, "Failed to save.")
 
 

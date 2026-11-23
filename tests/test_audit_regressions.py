@@ -1,7 +1,9 @@
 import csv
 import json
+import sqlite3
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -790,3 +792,36 @@ class HearingCalendarTests(TestCase):
                 self.assertEqual(corpus.get_bill_calendars(["10"])["10"]["events"], [])
             finally:
                 corpus.close()
+
+
+class CorrectnessFollowupTests(TestCase):
+    def test_keyword_loader_normalizes_and_rejects_bad_shapes(self):
+        from legiscanner import DEFAULT_KEYWORDS, load_keywords
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "keywords.json"
+            self.assertEqual(load_keywords(path), list(DEFAULT_KEYWORDS))
+            path.write_text('[" PFAS ", "pfas", "water   quality", ""]', encoding="utf-8")
+            self.assertEqual(load_keywords(path), ["PFAS", "water quality"])
+            path.write_text('{"invalid": "shape"}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_keywords(path)
+
+    def test_running_worker_owns_expired_job_until_it_releases_lock(self):
+        from job_manager import JobConflict, JobManager
+        from job_runner import execute_next_job
+
+        with TemporaryDirectory() as directory:
+            path = str(Path(directory) / "jobs.db")
+            manager = JobManager(path)
+            job = manager.enqueue_job("keyword_rescan", "CA", "ALL", {"states": ["CA"]})
+            with manager.worker_ownership() as owned:
+                self.assertTrue(owned)
+                manager.claim_next_job()
+                with closing(sqlite3.connect(path)) as connection, connection:
+                    connection.execute("UPDATE system_jobs SET heartbeat_at='2000-01-01' WHERE job_id=?", (job,))
+                self.assertIsNone(execute_next_job(None, directory, JobManager(path)))
+                with self.assertRaises(JobConflict):
+                    manager.start_job("keyword_rescan", "CA")
+                self.assertEqual(manager.get_job(job)["status"], "RUNNING")
+            self.assertEqual(manager.claim_next_job()["retry_of"], job)
