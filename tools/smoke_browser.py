@@ -118,6 +118,7 @@ def main():
                              for i in range(1, 52)),
                         )
                     admin_page.get_by_role("button", name="All Bills", exact=False).click()
+                    expect(admin_page.get_by_role("heading", name="All Bills", exact=True)).to_be_visible(timeout=15_000)
                     search = admin_page.get_by_role("textbox", name="Global Search", exact=False)
                     search.fill("Water policy")
                     search.press("Enter")
@@ -150,12 +151,21 @@ def main():
                          str(base / "data" / "bills.db")],
                         cwd=ROOT, env=env, check=True,
                     )
-                    admin_page.get_by_text("Civic Tags", exact=True).click()
+                    admin_page.get_by_role("button", name="Browse Water bills", exact=True).click()
                     expect(admin_page.get_by_role("heading", name="Civic Tags")).to_be_visible()
                     expect(admin_page.get_by_text("Last indexed", exact=False)).to_be_visible()
                     expect(admin_page.get_by_text("Tag results page", exact=True)).to_be_visible()
                     expect(admin_page.get_by_text("Suggested civic topics: Water", exact=True).first).to_be_visible()
-                    print("Browser smoke passed: the shared civic index can be browsed.")
+                    expect(admin_page.get_by_text("Water · Bills 1–50 of 51", exact=True)).to_be_visible()
+                    print("Browser smoke passed: a bill tag opens the corresponding shared results.")
+                    admin_page.get_by_text("View Details & Edit Notes", exact=False).click()
+                    admin_page.get_by_role("button", name="Draft a private rule", exact=True).click()
+                    expect(admin_page.get_by_role("heading", name="Topic Inbox")).to_be_visible()
+                    expect(admin_page.get_by_role("textbox", name="Topic name", exact=True)).to_have_value("Water policy")
+                    expect(admin_page.get_by_role("textbox", name="Search terms", exact=True)).to_have_value("water policy")
+                    expect(admin_page.get_by_text("My hearing portfolio", exact=True)).to_be_visible()
+                    expect(admin_page.locator('[data-testid="stException"]')).to_have_count(0)
+                    print("Browser smoke passed: drafting from evidence opens a prefilled form without saving.")
                     browser.close()
             except Exception:
                 log.seek(0)

@@ -128,7 +128,7 @@ def render_dashboard(tracked_count, topic_count, destinations, navigate):
     left.metric("Tracked bills", tracked_count)
     right.metric("Saved topics", topic_count)
     for heading, choices in (
-        ("Discover", ("🔍 All Bills", "Topic Inbox", "Historical Coverage")),
+        ("Discover", ("🔍 All Bills", "Civic Tags", "Topic Inbox", "Historical Coverage")),
         ("Monitor", ("⭐ Tracked Bills", "Daily Review", "Hearing Calendar", "Email Notifications")),
         ("Research people", ("👔 Legislator Directory", "Federal Voting Profiles", "🛠️ Staff Analytics")),
     ):

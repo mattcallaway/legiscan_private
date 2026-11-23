@@ -33,7 +33,7 @@ Example. Build a housing portfolio by creating a private topic with phrases like
 
 ### Suggested civic topics
 
-Bill details automatically show suggested civic topics based on the indexed title, summary, and subjects. Expand the details to see the phrase and source field behind each suggestion. The suggestions use a small shared civic dictionary and phrases learned from the corpus. Browse indexed labels in **Civic Tags**. A mention is evidence for a suggested label. It does not establish that the bill changes policy in that area.
+Results show **Civic tags** for shared suggestions and **My tags** for private labels from your rules and notes. On a bill card, **Browse** opens the corresponding shared tag in **Civic Tags**. Expand the details to see the phrase and source field behind each suggestion, or select **Draft a private rule** to review that phrase in Topic Inbox before saving. Suggested labels use a small shared dictionary and phrases learned from the corpus. A mention is evidence for a suggested label. It does not establish that the bill changes policy in that area.
 
 In **Topic Inbox**, choose **Tag matching bills**, **Track matches in Daily Review**, or both. Personal tags apply to matching records in your workspace, including historical bills. Editing the phrase rules reopens existing matches for review. An individual note's **My topics** remains available for labels you apply by hand.
 

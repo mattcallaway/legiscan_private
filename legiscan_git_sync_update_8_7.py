@@ -585,6 +585,19 @@ def render_amendment_comparison(bill_id, prefix):
                 st.info("No differences in the visible text.")
 
 
+def open_related_civic_bills(topic):
+    st.session_state["app_mode"] = "Civic Tags"
+    st.session_state["requested_civic_tag"] = topic
+    st.session_state.pop(f"civic_page:{topic}", None)
+
+
+def draft_private_topic(phrase):
+    st.session_state["app_mode"] = "Topic Inbox"
+    st.session_state["topic_phrase_draft"] = {"name": phrase.capitalize(), "terms": [phrase]}
+    for key in ("new_topic_name", "new_topic_terms", "new_topic_required", "new_topic_excluded"):
+        st.session_state.pop(key, None)
+
+
 def _render_bill_card(row, raw_note: dict, bill_id: str,
                       bill_notes: dict, tracked_bills: list,
                       key_prefix: str) -> dict:
@@ -642,6 +655,9 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
             if civic_topics:
                 labels = ", ".join(item["topic"] for item in civic_topics)
                 st.caption(f"Suggested civic topics: {labels}")
+                primary_topic = civic_topics[0]["topic"]
+                st.button(f"Browse {primary_topic} bills", key=f"{key_prefix}_browse_civic",
+                          on_click=open_related_civic_bills, args=(primary_topic,))
             if my_tags:
                 st.caption("My matching tags")
                 st.text(", ".join(my_tags))
@@ -698,6 +714,12 @@ def _render_bill_card(row, raw_note: dict, bill_id: str,
                     f'{match["phrase"]} ({match["field"]})' for match in item["evidence"]
                 )
                 st.caption(f'{item["topic"]} suggested from {evidence}')
+
+            if civic_topics and not _auth.is_guest():
+                phrases = sorted({match["phrase"] for item in civic_topics for match in item["evidence"]})
+                phrase = st.selectbox("Phrase for a private rule", phrases, key=f"{key_prefix}_private_phrase")
+                st.button("Draft a private rule", key=f"{key_prefix}_draft_private_rule",
+                          on_click=draft_private_topic, args=(phrase,))
 
             st.divider()
             baseline_key = f"{_username}:{key_prefix}_note_baseline"
@@ -1013,7 +1035,8 @@ global_search = st.sidebar.text_input(
 st.session_state.global_search = global_search
 
 view_modes = ["Dashboard", "🔍 All Bills", "🏷️ Keyword Matches", "⭐ Tracked Bills", "Topic Inbox",
-              "Hearing Calendar", "Historical Coverage", "👔 Legislator Directory", "Federal Voting Profiles", "🛠️ Staff Analytics", "Civic Tags"]
+              "Civic Tags", "Hearing Calendar", "Historical Coverage", "👔 Legislator Directory",
+              "Federal Voting Profiles", "🛠️ Staff Analytics"]
 queue_preferences = {}
 if not _auth.is_guest():
     view_modes.append("Email Notifications")
@@ -1739,6 +1762,12 @@ def render_bill_page(page, bill_notes, tracked_bills, prefix):
             "Bill": row.get("bill_number", bill_id),
             "Session": row.get("session", ""),
             "Title": row.get("title", ""),
+            "Civic tags": [
+                item["topic"] for item in suggest_civic_topics(row, learned=shared_civic_phrases)
+            ],
+            "My tags": list(dict.fromkeys([
+                *bill_notes.get(bill_id, {}).get("topics", []), *personal_topic_tags(row, private_topic_rules),
+            ])),
             "Status": STATUS_LEGEND.get(str(row.get("status_stage", "")), row.get("status_stage", "")),
             "Jurisdiction": row.get("jurisdiction_name", ""),
             "Last action": row.get("last_action", ""),
@@ -1746,7 +1775,6 @@ def render_bill_page(page, bill_notes, tracked_bills, prefix):
             "Committee": row.get("committees", ""),
             "Position": bill_notes.get(bill_id, {}).get("position", ""),
             "Priority": bill_notes.get(bill_id, {}).get("priority", ""),
-            "My topics": ", ".join(bill_notes.get(bill_id, {}).get("topics", [])),
             "Follow-up": bill_notes.get(bill_id, {}).get("follow_up", ""),
             "Tracked": bill_id in tracked_bills,
         }
@@ -1756,7 +1784,16 @@ def render_bill_page(page, bill_notes, tracked_bills, prefix):
         table["Why it matched"] = page["topic_match_reason"].tolist()
     st.dataframe(
         table, hide_index=True, height=min(430, 38 + 35 * len(table)),
-        column_config={"Tracked": st.column_config.CheckboxColumn(), "Title": st.column_config.TextColumn(width="large")},
+        column_config={
+            "Tracked": st.column_config.CheckboxColumn(),
+            "Title": st.column_config.TextColumn(width="large"),
+            "Civic tags": st.column_config.MultiselectColumn(
+                help="Shared suggestions from the bill title, summary, and subjects.", width="medium",
+            ),
+            "My tags": st.column_config.MultiselectColumn(
+                help="Private tags from your rules and saved notes.", width="medium",
+            ),
+        },
     )
     selected = st.selectbox(
         "Open a bill",
@@ -1958,7 +1995,7 @@ if app_mode == "Dashboard":
     def open_view(choice):
         st.session_state.app_mode = choice
 
-    render_dashboard(len(tracked_bills), len(load_bill_workspace(TOPICS_FILE, [])), view_modes, open_view)
+    render_dashboard(len(tracked_bills), len(private_topic_rules), view_modes, open_view)
 elif "All Bills" in app_mode:
     if not _CORPUS_AVAILABLE or not corpus:
         st.warning("Master Corpus SQLite not responding.")
@@ -2143,15 +2180,29 @@ elif app_mode == "Civic Tags":
         available = summary["counts"]
         if summary["last_indexed"]:
             st.caption(f'Last indexed {summary["last_indexed"][:16].replace("T", " ")} UTC')
+        requested = st.session_state.pop("requested_civic_tag", None)
+        if requested and requested not in available:
+            st.info(f"{requested} has no indexed matches yet. The next civic tag rebuild will check for matches.")
         if available and corpus:
-            tag = st.selectbox("Civic tag", list(available),
+            if requested in available:
+                st.session_state["selected_civic_tag"] = requested
+            if st.session_state.get("selected_civic_tag") not in available:
+                st.session_state.pop("selected_civic_tag", None)
+            tag = st.selectbox("Civic tag", list(available), key="selected_civic_tag",
                                format_func=lambda item: f"{item} ({available[item]:,} bills)")
-            page_count = (available[tag] + 49) // 50
-            page = st.number_input("Tag results page", 1, page_count, 1, key=f"civic_page:{tag}")
-            ids = indexed_civic_bills(DATA_DIR, tag, offset=(page - 1) * 50)
+            total = available[tag]
+            page_count = (total + 49) // 50
+            page_key = f"civic_page:{tag}"
+            st.session_state[page_key] = min(st.session_state.get(page_key, 1), page_count)
+            page = st.number_input("Tag results page", 1, page_count, step=1, key=page_key)
+            offset = (page - 1) * 50
+            ids = indexed_civic_bills(DATA_DIR, tag, offset=offset)
             matches = corpus.search_bills(bill_ids=ids, limit=50)
             if not matches.empty:
+                st.caption(f"{tag} · Bills {offset + 1:,}–{offset + len(matches):,} of {total:,}")
                 render_bill_page(matches, bill_notes, tracked_bills, "civic")
+            else:
+                st.info("No bills from this page are currently available in the corpus.")
         else:
             st.info("Shared matches appear after the next corpus sync or a civic tag index rebuild.")
     except sqlite3.Error:
@@ -2162,9 +2213,10 @@ elif app_mode == "Topic Inbox":
     st.subheader("Topic Inbox")
     st.caption("Create private tags and track phrases across current and historical bills.")
     topics = private_topic_rules
+    draft = st.session_state.get("topic_phrase_draft", {})
     with st.form("new_research_topic", clear_on_submit=True):
-        name = st.text_input("Topic name")
-        inputs = topic_rule_fields("new_topic")
+        name = st.text_input("Topic name", value=draft.get("name", ""), key="new_topic_name")
+        inputs = topic_rule_fields("new_topic", draft)
         auto_tag = st.checkbox("Tag matching bills", value=True)
         track_matches = st.checkbox("Track matches in Daily Review", value=True)
         if st.form_submit_button("Save topic"):
@@ -2187,6 +2239,8 @@ elif app_mode == "Topic Inbox":
             except (OSError, ValueError, sqlite3.Error) as error:
                 st.error(f"Topic could not be saved: {error}")
             else:
+                st.session_state.pop("topic_phrase_draft", None)
+                st.session_state["topic_inbox_selected"] = name.casefold()
                 publish_bill_workspace(TOPICS_FILE)
                 st.rerun()
     if topics:
@@ -2199,16 +2253,24 @@ elif app_mode == "Topic Inbox":
             if topic.get(field)
         ]
         st.caption("Title, summary and subjects | " + " | ".join(rule_summary))
-        show_all = st.checkbox("Include reviewed matches", key="topic_include_seen")
+        tracking = topic.get("track_matches", True)
+        uses = [label for enabled, label in (
+            (topic.get("auto_tag"), "Tags matching bills"), (tracking, "Shows unseen matches in Daily Review"),
+        ) if enabled]
+        st.caption(" · ".join(uses))
+        show_all = not tracking or st.checkbox("Include reviewed matches", key="topic_include_seen")
         matches = find_topic_matches(topic, corpus, df, () if show_all else topic["seen"])
         if not matches.empty:
             seen = set(topic["seen"])
             new = matches[~matches["bill_id"].astype(str).isin(seen)]
-            st.caption(f"{len(new):,} unseen in {len(matches):,} loaded matches")
+            if tracking:
+                st.caption(f"{len(new):,} unseen in {len(matches):,} loaded matches")
+            else:
+                st.caption(f"{len(matches):,} loaded matches")
             if len(matches) >= 500:
                 st.caption("Corpus search shows up to 500 matches. Narrow the terms to review a smaller topic.")
             show_bill_results(matches if show_all else new, bill_notes, tracked_bills, "topic")
-            if not new.empty and st.button("Mark loaded matches reviewed", key="topic_mark_seen"):
+            if tracking and not new.empty and st.button("Mark loaded matches reviewed", key="topic_mark_seen"):
                 def mark_seen(current):
                     if topic_id not in current:
                         raise ValueError("This topic was removed in another session.")
