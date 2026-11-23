@@ -5,7 +5,7 @@ import csv
 import os
 from datetime import datetime
 
-API_KEY = "de58519e5e99b73f16756ad6d1e5e377"
+from config import API_KEY
 KEYWORDS_FILE = "keywords.json"
 STATE = "CA"
 BASE_URL = "https://api.legiscan.com/"
@@ -51,8 +51,8 @@ def log(message):
     print(f"[{datetime.now().isoformat()}] {message}")
 
 def get_bill_details(bill_id):
-    url = f"{BASE_URL}?key={API_KEY}&op=getBill&id={bill_id}"
-    response = requests.get(url)
+    params = {"key": API_KEY, "op": "getBill", "id": bill_id}
+    response = requests.get(BASE_URL, params=params, timeout=(5, 30))
     if response.status_code == 200:
         data = response.json()
         if data.get("status") == "OK":
@@ -60,10 +60,10 @@ def get_bill_details(bill_id):
     return None
 
 def fetch_bills_by_keyword(keyword):
-    url = f"{BASE_URL}?key={API_KEY}&op=getSearchRaw&state={STATE}&query={keyword}"
-    log(f"Requesting: {url}")
+    params = {"key": API_KEY, "op": "getSearchRaw", "state": STATE, "query": keyword}
+    log(f"Searching {STATE} by keyword")
     try:
-        response = requests.get(url)
+        response = requests.get(BASE_URL, params=params, timeout=(5, 30))
         log(f"Status code: {response.status_code}")
         if response.status_code != 200:
             stats["api_status"] = "error"
@@ -173,7 +173,7 @@ def fetch_bills_by_keyword(keyword):
         log(f"Processed keyword '{keyword}'")
 
     except Exception as e:
-        log(f"Exception: {e}")
+        log(f"Scan failed: {type(e).__name__}")
         return []
 
 keywords = load_keywords()

@@ -5,13 +5,17 @@ Design principles:
   - Open self-registration: anyone can create an account.
   - First account created automatically becomes admin.
   - Passwords hashed with bcrypt (never stored in plaintext).
-  - Per-user data stored under DATA_DIR/users/<username>/
+  - New workspaces use opaque IDs; existing accounts keep their legacy paths.
   - Per-user optional LegiScan API key override.
   - Admins can view all users and delete / reset-password any user.
 """
 import os
 import json
 import logging
+from functools import wraps
+from tempfile import TemporaryDirectory
+from threading import RLock
+from uuid import uuid4
 from datetime import datetime, timezone
 
 import bcrypt
@@ -20,6 +24,7 @@ import streamlit as st
 from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
+_user_lock = RLock()
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 USERS_FILE   = os.path.join(DATA_DIR, "users.json")
@@ -28,10 +33,32 @@ USERS_SUBDIR = os.path.join(DATA_DIR, "users")
 
 # ── User data directory ───────────────────────────────────────────────────────
 def get_user_data_dir(username: str) -> str:
-    """Return (and create) the personal data directory for a user."""
-    d = os.path.join(USERS_SUBDIR, username)
-    os.makedirs(os.path.join(d, "uploads"), exist_ok=True)
-    return d
+    """Keep existing workspace paths while assigning new accounts opaque IDs."""
+    user = _load_users().get(username)
+    if user is None:
+        raise ValueError("Account is no longer available.")
+    workspace_id = user.get("workspace_id")
+    base = os.path.join(DATA_DIR, "workspaces") if workspace_id else USERS_SUBDIR
+    directory = os.path.join(base, workspace_id or username)
+    os.makedirs(os.path.join(directory, "uploads"), exist_ok=True)
+    return directory
+
+
+def get_guest_data_dir() -> str:
+    if "guest_workspace" not in st.session_state:
+        st.session_state.guest_workspace = TemporaryDirectory(prefix="legislation-guest-")
+    return st.session_state.guest_workspace.name
+
+
+def _serialize_account_write(function):
+    @wraps(function)
+    def serialized(*args, **kwargs):
+        with _user_lock:
+            try:
+                return function(*args, **kwargs)
+            except RuntimeError:
+                return False, "Account storage is unavailable."
+    return serialized
 
 
 # ── Users store (flat JSON) ───────────────────────────────────────────────────
@@ -40,10 +67,13 @@ def _load_users() -> dict:
         return {}
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"auth: failed to load users file: {e}")
-        return {}
+            users = json.load(f)
+        if not isinstance(users, dict) or not all(isinstance(record, dict) for record in users.values()):
+            raise ValueError("Invalid account storage")
+        return users
+    except (OSError, ValueError) as error:
+        logger.error("Account storage could not be read: %s", type(error).__name__)
+        raise RuntimeError("Account storage is unavailable.") from error
 
 
 def _save_users(users: dict) -> bool:
@@ -74,7 +104,19 @@ def _check_password(plaintext: str, hashed: str) -> bool:
 # ── Public API ────────────────────────────────────────────────────────────────
 def get_current_user() -> dict | None:
     """Return the logged-in user dict from session state, or None."""
-    return st.session_state.get("auth_user")
+    active = st.session_state.get("auth_user")
+    if not active or active.get("is_guest"):
+        return active
+    try:
+        stored = _load_users().get(active["username"])
+    except RuntimeError:
+        stored = None
+    if stored is None or active.get("workspace_id") != stored.get("workspace_id"):
+        logout()
+        return None
+    active["role"] = stored.get("role", "user")
+    active["api_key"] = stored.get("api_key", "")
+    return active
 
 
 def is_admin() -> bool:
@@ -83,9 +125,13 @@ def is_admin() -> bool:
 
 
 def logout():
-    st.session_state.pop("auth_user", None)
+    guest = st.session_state.pop("guest_workspace", None)
+    if guest is not None:
+        guest.cleanup()
+    st.session_state.clear()
 
 
+@_serialize_account_write
 def register_user(username: str, password: str, api_key: str = "") -> tuple[bool, str]:
     """
     Create a new user account.
@@ -109,6 +155,7 @@ def register_user(username: str, password: str, api_key: str = "") -> tuple[bool
     role = "admin" if not users else "user"   # first user → admin
     users[username] = {
         "password_hash": _hash_password(password),
+        "workspace_id":  uuid4().hex,
         "role":          role,
         "api_key":       api_key.strip(),
         "created_at":    datetime.now(timezone.utc).isoformat(),
@@ -121,6 +168,7 @@ def register_user(username: str, password: str, api_key: str = "") -> tuple[bool
     return True, f"Account created! You are now logged in as '{username}'."
 
 
+@_serialize_account_write
 def login_user(username: str, password: str) -> tuple[bool, str]:
     """Verify credentials and set session state. Returns (success, message)."""
     username = username.strip().lower()
@@ -131,6 +179,7 @@ def login_user(username: str, password: str) -> tuple[bool, str]:
 
     st.session_state.auth_user = {
         "username":  username,
+        "workspace_id": u.get("workspace_id"),
         "role":      u.get("role", "user"),
         "api_key":   u.get("api_key", ""),
         "is_guest":  False,
@@ -153,6 +202,7 @@ def is_guest() -> bool:
     return u is not None and u.get("is_guest", False)
 
 
+@_serialize_account_write
 def update_password(username: str, new_password: str) -> tuple[bool, str]:
     if len(new_password) < 6:
         return False, "Password must be at least 6 characters."
@@ -164,6 +214,7 @@ def update_password(username: str, new_password: str) -> tuple[bool, str]:
     return (True, "Password updated.") if ok else (False, "Failed to save.")
 
 
+@_serialize_account_write
 def update_api_key(username: str, api_key: str) -> tuple[bool, str]:
     users = _load_users()
     if username not in users:
@@ -190,19 +241,27 @@ def admin_list_users() -> list[dict]:
     ]
 
 
+@_serialize_account_write
 def admin_delete_user(target: str) -> tuple[bool, str]:
     users = _load_users()
     if target not in users:
         return False, "User not found."
+    if users[target].get("role") == "admin" and sum(u.get("role") == "admin" for u in users.values()) <= 1:
+        return False, "Keep at least one administrator."
     del users[target]
     ok = _save_users(users)
     return (True, f"User '{target}' deleted.") if ok else (False, "Failed to save.")
 
 
+@_serialize_account_write
 def admin_set_role(target: str, role: str) -> tuple[bool, str]:
     users = _load_users()
     if target not in users:
         return False, "User not found."
+    if role not in {"user", "admin"}:
+        return False, "Unknown role."
+    if role != "admin" and users[target].get("role") == "admin" and sum(u.get("role") == "admin" for u in users.values()) <= 1:
+        return False, "Keep at least one administrator."
     users[target]["role"] = role
     ok = _save_users(users)
     return (True, f"Role updated to '{role}'.") if ok else (False, "Failed to save.")

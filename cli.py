@@ -2,73 +2,110 @@ import argparse
 import logging
 import os
 import sys
+import time
 
 from config import DATA_DIR, API_KEY
-from corpus_manager import _CorpusManager, _CORPUS_AVAILABLE, US_STATES
+from corpus_manager import CorpusManager
+from legiscanner import US_STATES
 from job_manager import JobManager
-from job_runner import run_bootstrap_job, run_refresh_job, run_rescan_job
+from job_runner import execute_next_job, run_bootstrap_job, run_refresh_job, run_rescan_job
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Headless Task Runner for Legiscan Updater")
-    parser.add_argument("--task", type=str, required=True, choices=["bootstrap", "refresh", "rescan"], help="The pipeline job to execute")
+    parser.add_argument("--task", type=str, required=True, choices=["bootstrap", "refresh", "rescan", "worker", "notification-setup", "notifications"], help="The pipeline job to execute")
     parser.add_argument("--session-id", type=int, help="Target session ID for bootstrap/refresh")
     parser.add_argument("--jurisdiction", type=str, help="Target jurisdiction code for bootstrap/refresh (e.g. CA, US)")
     parser.add_argument("--states", type=str, help="Comma-separated state codes for rescan (e.g., CA,NY,US)")
     
+    parser.add_argument("--once", action="store_true", help="Worker: process at most one queued job and exit.")
     args = parser.parse_args()
     
-    if not _CORPUS_AVAILABLE:
-        logger.error("Corpus manager is not available. Cannot run headless jobs.")
-        sys.exit(1)
-        
+    if args.task == "worker" and (not DATA_DIR or not API_KEY):
+        parser.error("The worker requires DATA_DIR and a server API_KEY.")
+
+    if args.task in {"notification-setup", "notifications"}:
+        from notifications import Notifications
+
+        try:
+            service = Notifications.from_environment()
+            if args.task == "notification-setup":
+                service.initialize()
+                logger.info("PostgreSQL notification tables are ready.")
+            else:
+                if not DATA_DIR:
+                    parser.error("Notification delivery requires the persistent DATA_DIR.")
+                result = service.process(DATA_DIR)
+                if result is None:
+                    logger.info("Another notification pass is already running.")
+                else:
+                    logger.info("Status notifications: %s queued, %s accepted by Resend.", *result)
+            return 0
+        except Exception as error:
+            logger.error("Notification command failed: %s", type(error).__name__)
+            return 1
+
     job_db_path = os.path.join(DATA_DIR, "jobs.db")
     job_manager = JobManager(job_db_path)
-    corpus = _CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
+    corpus = CorpusManager(os.path.join(DATA_DIR, "bills.db"), API_KEY)
     
     try:
+        if args.task == "worker":
+            logger.info("Waiting for queued sync jobs.")
+            while True:
+                job_id = execute_next_job(corpus, DATA_DIR, job_manager)
+                if args.once:
+                    job = job_manager.get_job(job_id) if job_id else None
+                    return int(job is not None and job["status"] != "SUCCESS")
+                if job_id is None:
+                    time.sleep(2)
+
         if args.task == "bootstrap":
             if not args.session_id or not args.jurisdiction:
                 logger.error("--session-id and --jurisdiction required for bootstrap")
                 sys.exit(1)
             logger.info(f"Running Bootstrap for {args.jurisdiction} ({args.session_id})")
-            run_bootstrap_job(corpus, args.session_id, args.jurisdiction, job_manager)
+            stats = run_bootstrap_job(corpus, args.session_id, args.jurisdiction, job_manager)
+            if stats["errors"]:
+                return 1
             
         elif args.task == "refresh":
             if not args.session_id or not args.jurisdiction:
                 logger.error("--session-id and --jurisdiction required for refresh")
                 sys.exit(1)
             logger.info(f"Running Incremental Refresh for {args.jurisdiction} ({args.session_id})")
-            run_refresh_job(corpus, args.session_id, args.jurisdiction, job_manager)
+            stats = run_refresh_job(corpus, args.session_id, args.jurisdiction, job_manager)
             
+            if stats["errors"]:
+                return 1
+
         elif args.task == "rescan":
-            states = [s.strip() for s in args.states.split(",")] if args.states else ["California", "US"]
-            # Convert state codes back to names if needed, or assume caller provides exact Legiscanner compat codes.
-            # Run scan needs full names for States (e.g. "California"), but uses "US" for Federal
-            resolved_states = []
-            for s in states:
-                if s == "ALL":
-                    resolved_states.extend(US_STATES.values())
-                    continue
-                if s == "US":
-                    resolved_states.append("US")
-                    continue
-                # Match code or full name
-                if s in US_STATES: resolved_states.append(US_STATES[s])
-                elif s in US_STATES.values(): resolved_states.append(s)
-                else: logger.warning(f"Unknown state arg: {s}")
-                
-            resolved_states = list(set(resolved_states))
-            logger.info(f"Running Keyword Rescan for states: {resolved_states}")
-            run_rescan_job(corpus, resolved_states, DATA_DIR, job_manager, initiated_by="cli")
-            
+            codes_by_name = {name.casefold(): code for code, name in US_STATES.items()}
+            requested = args.states.split(",") if args.states else ["CA"]
+            states = []
+            for state in requested:
+                state = state.strip()
+                code = codes_by_name.get(state.casefold(), state.upper())
+                if code not in US_STATES and code not in {"ALL", "US"}:
+                    parser.error(f"Unknown jurisdiction: {state!r}")
+                states.append(code)
+            stats = run_rescan_job(corpus, list(dict.fromkeys(states)), DATA_DIR, job_manager, initiated_by="cli")
+            if stats["api_status"] == "error":
+                return 1
+
         logger.info(f"Task {args.task} completed successfully.")
         
+    except KeyboardInterrupt:
+        return 130
     except Exception as e:
         logger.error(f"Task {args.task} failed: {e}")
-        sys.exit(1)
+        return 1
+    finally:
+        corpus.close()
+
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

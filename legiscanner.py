@@ -16,8 +16,10 @@ import json
 import csv
 import logging
 import requests
+from request_budget import allow_request
 import time
 import argparse
+from tempfile import NamedTemporaryFile
 from datetime import datetime
 from config import API_KEY, DATA_DIR
 
@@ -73,14 +75,16 @@ def save_cache(cache, filepath=CACHE_FILE):
 
 
 def fetch_search_results(jurisdiction, keyword):
-    url = f"{BASE_URL}?key={API_KEY}&op=getSearchRaw&state={jurisdiction}&query={keyword}"
+    if not allow_request():
+        return [], 0, 0, False
+    params = {"key": API_KEY, "op": "getSearchRaw", "state": jurisdiction, "query": keyword}
     logger.info(f"Searching {jurisdiction} for keyword '{keyword}'")
     try:
-        r = requests.get(url)
+        r = requests.get(BASE_URL, params=params, timeout=(5, 30))
         r.raise_for_status()
         data = r.json()
     except Exception as e:
-        logger.error(f"Error fetching search results for {jurisdiction}/{keyword}: {e}")
+        logger.error(f"Error fetching search results for {jurisdiction}: {type(e).__name__}")
         return [], 0, 0, False
 
     if data.get('status') != 'OK':
@@ -98,13 +102,15 @@ def fetch_search_results(jurisdiction, keyword):
 
 
 def get_bill_details(bill_id):
-    url = f"{BASE_URL}?key={API_KEY}&op=getBill&id={bill_id}"
+    if not allow_request():
+        return None
+    params = {"key": API_KEY, "op": "getBill", "id": bill_id}
     try:
-        r = requests.get(url)
+        r = requests.get(BASE_URL, params=params, timeout=(5, 30))
         r.raise_for_status()
         data = r.json()
     except Exception as e:
-        logger.error(f"Error fetching bill {bill_id}: {e}")
+        logger.error(f"Error fetching bill {bill_id}: {type(e).__name__}")
         return None
 
     if data.get('status') != 'OK':
@@ -173,42 +179,55 @@ def flatten_bill(details, jurisdiction, keyword):
 def load_existing_csv(filepath=CSV_FILE):
     existing_bills = {}
     if os.path.exists(filepath):
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    existing_bills[str(row.get('bill_id', ''))] = row
-        except Exception as e:
-            logger.error(f"Error reading existing CSV: {e}")
+        with open(filepath, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.DictReader(f, strict=True)
+            if not reader.fieldnames or 'bill_id' not in reader.fieldnames:
+                raise ValueError("Existing bill CSV is missing the bill_id column.")
+            for row in reader:
+                bill_id = row.get('bill_id')
+                if not bill_id or bill_id in existing_bills or None in row or None in row.values():
+                    raise ValueError(f"Cannot safely read existing bill CSV at line {reader.line_num}.")
+                existing_bills[bill_id] = row
     return existing_bills
 
-def run_scan(states=None, data_dir=None):
-    # Default to ALL if none
+def run_scan(states=None, data_dir=None, corpus_manager=None):
     if not states:
-        states = [ALL_ALIAS]
+        raise ValueError("Select at least one jurisdiction or explicitly request ALL.")
+    invalid = set(states) - US_STATES.keys() - {ALL_ALIAS, FEDERAL_ALIAS}
+    if invalid:
+        raise ValueError(f"Unknown jurisdiction codes: {sorted(invalid)}")
+    states = list(dict.fromkeys(states))
     # Expand ALL
     if ALL_ALIAS in states:
         states = list(US_STATES.keys()) + [FEDERAL_ALIAS]
     data_dir = data_dir or DATA_DIR
     os.makedirs(data_dir, exist_ok=True)
 
-    keywords = load_keywords()
-    cache    = load_cache()
-    existing_bills = load_existing_csv(CSV_FILE)
+    keywords = load_keywords(os.path.join(data_dir, os.path.basename(KEYWORDS_FILE)))
+    cache_path = os.path.join(data_dir, os.path.basename(CACHE_FILE))
+    csv_path = os.path.join(data_dir, os.path.basename(CSV_FILE))
+    cache = load_cache(cache_path)
+    existing_bills = load_existing_csv(csv_path)
     
     stats = {
         "api_status": "ok",
         "total_found": 0,
         "filtered": 0,
         "new_bills": 0,
-        "changed_status": 0
+        "changed_status": 0,
+        "updated_bills": 0,
+        "search_failures": 0,
+        "detail_failures": 0,
+        "api_calls": 0
     }
 
     for jurisdiction in states:
         for keyword in keywords:
+            stats["api_calls"] += 1
             searches, total_f, filtered_c, api_ok = fetch_search_results(jurisdiction, keyword)
             if not api_ok:
                 stats["api_status"] = "error"
+                stats["search_failures"] += 1
             
             stats["total_found"] += total_f
             stats["filtered"] += filtered_c
@@ -217,21 +236,29 @@ def run_scan(states=None, data_dir=None):
             for item in searches:
                 bid      = str(item['bill_id'])
                 new_hash = item['change_hash']
-                old_hash = cache.get(bid, {}).get('change_hash')
-                if new_hash != old_hash:
+                old_hash = existing_bills.get(bid, {}).get('change_hash') or cache.get(bid, {}).get('change_hash')
+                if bid not in existing_bills or not new_hash or new_hash != old_hash:
+                    stats["api_calls"] += 1
                     details = get_bill_details(bid)
-                    if not details:
+                    time.sleep(0.2)
+                    if not details or str(details.get("bill_id")) != bid:
+                        stats["api_status"] = "error"
+                        stats["detail_failures"] += 1
                         continue
                     row = flatten_bill(details, jurisdiction, keyword)
                     
                     if bid not in existing_bills:
                         stats["new_bills"] += 1
                     else:
-                        stats["changed_status"] += 1
+                        stats["updated_bills"] += 1
+                        if str(existing_bills[bid].get("status_stage", "")) != str(row["status_stage"]):
+                            stats["changed_status"] += 1
                         
+                    row["change_hash"] = new_hash
                     existing_bills[bid] = row
                     cache[bid] = {'change_hash': new_hash, 'last_checked': datetime.now().isoformat()}
-                    time.sleep(0.2)
+                if corpus_manager is not None:
+                    corpus_manager.record_keyword_match(int(bid), keyword)
 
     # Write CSV
     if existing_bills:
@@ -239,23 +266,31 @@ def run_scan(states=None, data_dir=None):
             'jurisdiction_level','jurisdiction_name','bill_id','session','bill_number',
             'title','description','status_date','status_stage','url','committee',
             'keyword','sponsor_names','sponsors','committees','referrals','history',
-            'last_action','last_action_date','subjects'
+            'last_action','last_action_date','subjects','change_hash'
         ]
         # Ensure all existing rows have exactly these fieldnames (missing ones as empty string)
         clean_bills = []
-        for bill in existing_bills.values():
+        for bill_id, bill in existing_bills.items():
             clean_row = {k: bill.get(k, '') for k in fieldnames}
+            clean_row["change_hash"] = clean_row["change_hash"] or cache.get(bill_id, {}).get("change_hash", "")
             clean_bills.append(clean_row)
             
-        with open(CSV_FILE, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(clean_bills)
-        logger.info(f"Wrote {len(existing_bills)} rows to {CSV_FILE}")
+        with NamedTemporaryFile(mode='w', dir=data_dir, newline='', encoding='utf-8', delete=False) as csvfile:
+            pending_csv = csvfile.name
+        try:
+            with open(pending_csv, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(clean_bills)
+            os.replace(pending_csv, csv_path)
+        finally:
+            if os.path.exists(pending_csv):
+                os.unlink(pending_csv)
+        logger.info("Wrote %s rows to %s", len(existing_bills), csv_path)
     else:
         logger.info("No bills to write.")
 
-    save_cache(cache)
+    save_cache(cache, cache_path)
     return stats
 
 
@@ -263,5 +298,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run LegiScan comprehensive tracker")
     parser.add_argument('--states', nargs='+', help='Jurisdictions to scan (e.g., CA NY TX US ALL)')
     args = parser.parse_args()
-    stats = run_scan(states=[s.upper() for s in (args.states or [])])
+    stats = run_scan(states=[s.upper() for s in (args.states or ["CA"])])
     print(f"Scan complete. Stats: {json.dumps(stats, indent=2)}")

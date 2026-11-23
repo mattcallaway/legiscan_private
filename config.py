@@ -10,7 +10,7 @@ with open(cfg_path, 'r', encoding='utf-8') as f:
 # Expand any environment variables in paths, prioritizing OS environment vars
 REPO_DIR = os.environ.get("REPO_DIR", os.path.expandvars(cfg.get("repo_dir", "")))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.expandvars(cfg.get("data_dir", "")))
-API_KEY  = os.environ.get("API_KEY", cfg.get("api_key", ""))
+API_KEY  = os.environ.get("API_KEY", "")
 
 # Ensure directories exist
 if REPO_DIR:

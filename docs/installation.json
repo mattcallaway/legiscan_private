@@ -1,0 +1,421 @@
+{
+  "schema_version": 1,
+  "application": "UFtW Bill Tracker",
+  "repository": "https://github.com/mattcallaway/legiscan_private.git",
+  "access": "private",
+  "human_guides": [
+    "../README.md",
+    "TECHMAP.md"
+  ],
+  "source_inventory": "techmap.json",
+  "working_directory": "repository root",
+  "prerequisites": {
+    "python": {
+      "recommended": "3.12",
+      "basis": "repository CI configuration"
+    },
+    "dependencies_manifest": "../requirements.txt",
+    "source_checkout": "Git with authorized source access",
+    "data_storage": "private writable persistent filesystem with SQLite locking",
+    "app_instances_per_data_directory": 1,
+    "browser": "Streamlit UI with WebSocket connectivity",
+    "notification_database": {
+      "engine": "PostgreSQL",
+      "ci_version": "16",
+      "optional": true
+    }
+  },
+  "entrypoints": {
+    "app": [
+      "python",
+      "-m",
+      "streamlit",
+      "run",
+      "legiscan_git_sync_update_8_7.py"
+    ],
+    "cli": [
+      "python",
+      "cli.py"
+    ],
+    "tests": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-v"
+    ],
+    "generate_techmap": [
+      "python",
+      "tools/generate_techmap.py"
+    ],
+    "check_techmap": [
+      "python",
+      "tools/generate_techmap.py",
+      "--check"
+    ]
+  },
+  "platforms": {
+    "windows": {
+      "shell": "PowerShell",
+      "create_venv": [
+        "py",
+        "-3.12",
+        "-m",
+        "venv",
+        ".venv"
+      ],
+      "venv_python": ".venv/Scripts/python.exe",
+      "data_path_example": "%LOCALAPPDATA%/UFtWTracker/data",
+      "scheduler": "Task Scheduler or managed process runner"
+    },
+    "macos": {
+      "shell": "POSIX-compatible",
+      "create_venv": [
+        "python3.12",
+        "-m",
+        "venv",
+        ".venv"
+      ],
+      "venv_python": ".venv/bin/python",
+      "data_path_example": "$HOME/uftw-tracker/data",
+      "scheduler": "launchd or managed process runner"
+    },
+    "linux": {
+      "shell": "POSIX-compatible",
+      "create_venv": [
+        "python3.12",
+        "-m",
+        "venv",
+        ".venv"
+      ],
+      "venv_python": ".venv/bin/python",
+      "data_path_example": "$HOME/uftw-tracker/data",
+      "hosted_data_path_example": "/var/lib/uftw-tracker/data",
+      "scheduler": "systemd timers, cron, or managed process runner"
+    }
+  },
+  "install_argv_template": [
+    "{venv_python}",
+    "-m",
+    "pip",
+    "install",
+    "-r",
+    "requirements.txt"
+  ],
+  "local_launch_argv_template": [
+    "{venv_python}",
+    "-m",
+    "streamlit",
+    "run",
+    "legiscan_git_sync_update_8_7.py",
+    "--server.address",
+    "127.0.0.1"
+  ],
+  "network": {
+    "local_default_port": 8501,
+    "hosted_transport": "HTTPS to proxy, supporting HTTP and WebSocket forwarding",
+    "hosted_bind": "Use loopback behind a local proxy or the interface requested by the hosting platform",
+    "postgresql_transport": "Use provider security and TLS settings when remote"
+  },
+  "environment": {
+    "DATA_DIR": {
+      "type": "absolute_directory",
+      "secret": false,
+      "required_for": [
+        "durable_app",
+        "worker",
+        "scheduler",
+        "notification_sender"
+      ],
+      "fallback_config_key": "data_dir"
+    },
+    "REPO_DIR": {
+      "type": "absolute_directory",
+      "secret": false,
+      "required_for": [
+        "git_publication"
+      ],
+      "fallback_config_key": "repo_dir",
+      "private_operation": "Use a separate non-Git directory"
+    },
+    "API_KEY": {
+      "type": "string",
+      "secret": true,
+      "required_for": [
+        "bill_ingestion",
+        "keyword_rescan",
+        "worker"
+      ]
+    },
+    "CONGRESS_API_KEY": {
+      "type": "string",
+      "secret": true,
+      "required_for": [
+        "official_congress_terms"
+      ]
+    },
+    "LEGISCAN_BACKGROUND_JOBS": {
+      "type": "flag",
+      "true_values": [
+        "1",
+        "true",
+        "yes"
+      ],
+      "required_for": [
+        "app_background_queue"
+      ]
+    },
+    "LEGISCAN_JOB_REQUEST_LIMIT": {
+      "type": "positive_integer",
+      "secret": false,
+      "optional": true,
+      "scope": "one ingestion job"
+    },
+    "NOTIFICATION_DATABASE_URL": {
+      "type": "postgresql_dsn",
+      "secret": true,
+      "required_for": [
+        "notification_ui",
+        "notification_setup",
+        "notification_sender"
+      ]
+    },
+    "RESEND_API_KEY": {
+      "type": "string",
+      "secret": true,
+      "required_for": [
+        "notification_ui",
+        "notification_setup",
+        "notification_sender"
+      ]
+    },
+    "RESEND_FROM_EMAIL": {
+      "type": "sender",
+      "secret": false,
+      "required_for": [
+        "notification_ui",
+        "notification_setup",
+        "notification_sender"
+      ]
+    },
+    "TEST_NOTIFICATION_DATABASE_URL": {
+      "type": "postgresql_dsn",
+      "secret": true,
+      "required_for": [
+        "isolated_notification_integration_test"
+      ]
+    }
+  },
+  "integrations": {
+    "legiscan": {
+      "base_url": "https://api.legiscan.com/",
+      "jurisdictions": {
+        "CA": "California Legislature",
+        "US": "U.S. Congress"
+      },
+      "credential": "API_KEY",
+      "manual": "https://api.legiscan.com/dl/LegiScan_API_User_Manual.pdf"
+    },
+    "congress_gov": {
+      "endpoint_template": "https://api.congress.gov/v3/member/{bioguide_id}",
+      "credential": "CONGRESS_API_KEY",
+      "purpose": "Sourced federal service terms"
+    },
+    "staff_workbook": {
+      "input": "Live XLSX export or authorized .xlsx upload",
+      "tabs": [
+        "Assembly",
+        "Senate",
+        "Asm Issues",
+        "Sen Issues",
+        "Asm Cmte Staff",
+        "Sen Cmte Staff"
+      ],
+      "apply_after_preview": true
+    },
+    "resend": {
+      "endpoint": "https://api.resend.com/emails",
+      "credential": "RESEND_API_KEY",
+      "verified_sender_setting": "RESEND_FROM_EMAIL",
+      "purpose": "Account email verification and tracked bill status alerts"
+    },
+    "git": {
+      "optional": true,
+      "expected_checkout_setting": "REPO_DIR",
+      "allowlisted_basenames": [
+        "LegiScan_Enhanced_Full_Tracker.csv",
+        "keywords.json"
+      ],
+      "use_as_private_backup": false
+    }
+  },
+  "cli_tasks": {
+    "bootstrap": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "bootstrap",
+        "--jurisdiction",
+        "{jurisdiction}",
+        "--session-id",
+        "{session_id}"
+      ],
+      "individual_fallback": true
+    },
+    "refresh": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "refresh",
+        "--jurisdiction",
+        "{jurisdiction}",
+        "--session-id",
+        "{session_id}"
+      ]
+    },
+    "rescan": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "rescan",
+        "--states",
+        "CA,US"
+      ],
+      "default_states": [
+        "CA"
+      ]
+    },
+    "worker": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "worker"
+      ],
+      "optional_flag": "--once"
+    },
+    "notification-setup": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "notification-setup"
+      ],
+      "phase": "before enabling email"
+    },
+    "notifications": {
+      "argv": [
+        "python",
+        "cli.py",
+        "--task",
+        "notifications"
+      ],
+      "phase": "regularly and after corpus refreshes"
+    }
+  },
+  "operator_workflows": {
+    "first_admin": [
+      "Use a fresh durable DATA_DIR",
+      "Restrict initial access",
+      "Register the intended first administrator"
+    ],
+    "sync_current": [
+      "Admin & Database Tools",
+      "Master Corpus Tasks",
+      "Choose CA and/or US",
+      "Sync selected jurisdictions",
+      "Check Recent Jobs and Historical Coverage"
+    ],
+    "import_historical": [
+      "Admin & Database Tools",
+      "Master Corpus Tasks",
+      "Manual session import and refresh",
+      "Select a historical session",
+      "Verify coverage"
+    ],
+    "enable_email": [
+      "Provision PostgreSQL",
+      "Verify sender domain in Resend",
+      "Configure all email settings",
+      "Run notification-setup",
+      "Restart app",
+      "Verify recipient via UI",
+      "Run baseline sender pass",
+      "Schedule sender"
+    ],
+    "restore_rehearsal": [
+      "Restore DATA_DIR to isolated storage",
+      "Restore PostgreSQL into a separate database when enabled",
+      "Keep delivery and worker stopped",
+      "Verify login, watchlists, notes, files, staff and coverage",
+      "Inspect old queue and delivery state"
+    ]
+  },
+  "backup": {
+    "filesystem": {
+      "path_environment_variable": "DATA_DIR",
+      "include_hidden_and_nested": true,
+      "write_consistency_required": true
+    },
+    "postgresql": {
+      "dsn_environment_variable": "NOTIFICATION_DATABASE_URL",
+      "required_when_email_enabled": true
+    },
+    "publication_is_backup": false
+  },
+  "user_workflows": {
+    "find_and_track": [
+      "Sign in",
+      "Open All Bills",
+      "Select jurisdiction and session",
+      "Filter or search",
+      "Open a bill and track it",
+      "Set topics, position, priority and follow-up in Tracked Bills"
+    ],
+    "topic_monitoring": [
+      "Open Topic Inbox",
+      "Define alternative, required and excluded phrases",
+      "Review match evidence",
+      "Track relevant bills",
+      "Mark loaded matches reviewed"
+    ],
+    "bill_review": [
+      "Enable Daily Review",
+      "Inspect due follow-ups and changes",
+      "Mark reviewed or snooze",
+      "Compare tracked bills or amendment versions"
+    ],
+    "hearing_calendar": [
+      "Open Hearing Calendar",
+      "Check snapshot freshness",
+      "Refresh where eligible",
+      "Export date markers",
+      "Confirm official hearing details"
+    ],
+    "historical_research": [
+      "Check Historical Coverage",
+      "Request manual import for missing sessions",
+      "Filter All Bills by imported session",
+      "Open original sources"
+    ],
+    "policymaker_research": [
+      "Open Legislator Directory or Federal Voting Profiles",
+      "Select the identity",
+      "Inspect vote coverage",
+      "Filter by sourced term where available",
+      "Save private notes"
+    ],
+    "email_notifications": [
+      "Open Email Notifications while signed in",
+      "Request code",
+      "Verify mailbox within 20 minutes",
+      "Enable alerts",
+      "Pause or resume from the same view"
+    ]
+  }
+}

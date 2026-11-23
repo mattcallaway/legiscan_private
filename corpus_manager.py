@@ -51,10 +51,12 @@ import os
 import sqlite3
 import time
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 import requests
+from request_budget import allow_request
+from hearing_calendar import normalize_calendar, source_link
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -143,6 +145,8 @@ def _flatten_bill_to_row(details: dict, jurisdiction: str, session_id: int) -> d
         "last_action_date": details.get("last_action_date", details.get("status_date", "")),
         "referrals":        "; ".join(ref_list),
         "change_hash":      details.get("change_hash", ""),
+        "calendar_feed": details.get("calendar"),
+        "calendar_source": source_link(details.get("state_link"), details.get("url")),
         "latest_doc_id":    latest_doc_id,
         "latest_doc_url":   latest_doc_url,
         "last_fetched":     datetime.now(timezone.utc).isoformat(),
@@ -190,6 +194,21 @@ CREATE TABLE IF NOT EXISTS bills (
     latest_doc_url   TEXT,
     last_fetched     TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS bill_calendar_snapshots (
+    bill_id INTEGER PRIMARY KEY,
+    jurisdiction TEXT NOT NULL,
+    bill_number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    events_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bill_calendar_attempts (
+    bill_id INTEGER PRIMARY KEY,
+    checked_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS bill_texts (
@@ -288,6 +307,7 @@ class CorpusManager:
         if self._conn is None:
             self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
+            self._conn.create_function("casefold", 1, str.casefold, deterministic=True)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
         return self._conn
@@ -316,17 +336,20 @@ class CorpusManager:
 
     def _api_get(self, params: dict, timeout: Optional[int] = None) -> dict:
         """Make one LegiScan API request (JSON response)."""
+        if not allow_request():
+            return {"status": "ERROR", "error": "Per-job LegiScan request budget reached"}
         p = dict(params)
         p["key"] = self.api_key
+        self._api_calls_run += 1
         try:
             r = requests.get(BASE_URL, params=p, timeout=timeout or 30)
             r.raise_for_status()
-            self._api_calls_run += 1
             time.sleep(self.rate_limit_s)
             return r.json()
         except Exception as exc:
-            logger.error(f"API error ({params.get('op', '?')}): {exc}")
-            return {"status": "ERROR", "error": str(exc)}
+            message = f"{type(exc).__name__} while calling {params.get('op', '?')}"
+            logger.error("LegiScan API error: %s", message)
+            return {"status": "ERROR", "error": message}
 
     def _meta_get(self, key: str) -> Optional[str]:
         row = self._get_conn().execute(
@@ -414,6 +437,8 @@ class CorpusManager:
         session_id: int,
         jurisdiction: str,
         progress_cb: Optional[Callable[[float, str], None]] = None,
+        *,
+        allow_individual_fallback: bool = True,
     ) -> dict:
         """
         Bootstrap a session using the bulk dataset ZIP.
@@ -441,6 +466,8 @@ class CorpusManager:
             (d for d in datasets if d.get("session_id") == session_id), None
         )
 
+        if not target_ds and not allow_individual_fallback:
+            raise RuntimeError("A bulk dataset is unavailable for this session.")
         if not target_ds:
             logger.warning(
                 f"No dataset found for session_id={session_id} ({jurisdiction}); "
@@ -460,6 +487,8 @@ class CorpusManager:
             progress_cb(0.05, "Downloading dataset ZIP (this may take a moment)…")
 
         zip_bytes = self._download_dataset_zip(session_id, access_key)
+        if zip_bytes is None and not allow_individual_fallback:
+            raise RuntimeError("The bulk dataset download failed. Retry the bulk sync.")
         if zip_bytes is None:
             logger.warning("getDataset ZIP unavailable; falling back to getMasterListRaw.")
             stats.update(
@@ -472,7 +501,8 @@ class CorpusManager:
             progress_cb(0.1, "Parsing ZIP contents…")
 
         self._ingest_zip(zip_bytes, session_id, jurisdiction, progress_cb, stats)
-        self._record_bootstrap(session_id, jurisdiction)
+        if not stats["errors"]:
+            self._record_bootstrap(session_id, jurisdiction)
 
         stats["api_calls"] = self._api_calls_run - start_calls
         logger.info(f"Bootstrap complete: {stats}")
@@ -482,6 +512,8 @@ class CorpusManager:
         self, session_id: int, access_key: str
     ) -> Optional[bytes]:
         """Download and decode the dataset ZIP. Returns raw bytes or None."""
+        if not allow_request():
+            return None
         p = {
             "op":         "getDataset",
             "id":         session_id,
@@ -497,7 +529,7 @@ class CorpusManager:
             time.sleep(self.rate_limit_s)
             data = r.json()
         except Exception as exc:
-            logger.error(f"getDataset download error: {exc}")
+            logger.error(f"getDataset download error: {type(exc).__name__}")
             return None
 
         if data.get("status") != "OK":
@@ -616,7 +648,9 @@ class CorpusManager:
                             p = raw.get("person", raw)
                             if p.get("people_id"):
                                 self._upsert_person(conn, p)
-                    except Exception as exc: pass
+                    except Exception as exc:
+                        logger.warning("Dataset record could not be imported: %s", type(exc).__name__)
+                        stats["errors"] += 1
                 
                 for i, name in enumerate(bill_files):
                     processed += 1
@@ -638,6 +672,7 @@ class CorpusManager:
                             self._upsert_person(conn, sponsor)
 
                     row = _flatten_bill_to_row(bill_data, jurisdiction, session_id)
+                    row["calendar_from_dataset"] = True
                     self._upsert_bill(conn, row, stats)
                     
                     for r in bill_data.get("votes", []):
@@ -657,13 +692,17 @@ class CorpusManager:
                             rc_bid = r.get("bill_id")
                             if r.get("roll_call_id") and rc_bid:
                                 self._upsert_rollcall(conn, r, rc_bid)
-                    except Exception as exc: pass
+                    except Exception as exc:
+                        logger.warning("Dataset record could not be imported: %s", type(exc).__name__)
+                        stats["errors"] += 1
                     
                     if processed % 100 == 0:
                         conn.commit()
                         if progress_cb:
                             progress_cb(0.1 + 0.85 * (processed / max(total, 1)), f"Ingested {processed}/{total} files…")
 
+                if not stats["new"] and not stats["updated"]:
+                    stats["errors"] += 1
                 conn.commit()
                 if progress_cb:
                     progress_cb(1.0, f"Done — {stats['new']} new, {stats['updated']} updated")
@@ -691,7 +730,8 @@ class CorpusManager:
         logger.info(f"Fallback bootstrap: getMasterListRaw session {session_id}")
         data = self._api_get({"op": "getMasterListRaw", "id": session_id})
         if data.get("status") != "OK":
-            logger.error(f"getMasterListRaw failed: {data}")
+            logger.error("Bootstrap master list failed for session %s", session_id)
+            stats["errors"] += 1
             return stats
 
         master = data.get("masterlist", {})
@@ -734,7 +774,7 @@ class CorpusManager:
             bill_detail["change_hash"] = meta.get("change_hash", "")
             row = _flatten_bill_to_row(bill_detail, jurisdiction, session_id)
             self._upsert_bill(conn, row, stats)
-            self._process_bill_votes(conn, bill_detail)
+            stats["errors"] += self._process_bill_votes(conn, bill_detail)
 
             if (i + 1) % 50 == 0:
                 conn.commit()
@@ -750,7 +790,8 @@ class CorpusManager:
 
         conn.commit()
         stats["skipped"] = len(cached_ids)
-        self._record_bootstrap(session_id, jurisdiction)
+        if not stats["errors"]:
+            self._record_bootstrap(session_id, jurisdiction)
         return stats
 
     def _record_bootstrap(self, session_id: int, jurisdiction: str) -> None:
@@ -792,8 +833,9 @@ class CorpusManager:
             progress_cb(0.0, "Fetching master bill list…")
 
         data = self._api_get({"op": "getMasterListRaw", "id": session_id})
-        if data.get("status") != "OK":
-            logger.error(f"getMasterListRaw failed: {data}")
+        if data.get("status") != "OK" or not isinstance(data.get("masterlist"), dict):
+            logger.error("getMasterListRaw failed for session %s", session_id)
+            stats["errors"] += 1
             stats["api_calls"] = self._api_calls_run - start_calls
             return stats
 
@@ -830,41 +872,75 @@ class CorpusManager:
             f"Refresh: {stats['skipped']} unchanged, {total_fetch} to fetch"
         )
 
+        updates = []
         for i, meta in enumerate(to_fetch):
             bid = meta["bill_id"]
             detail_data = self._api_get({"op": "getBill", "id": bid})
-            if detail_data.get("status") != "OK":
-                logger.warning(f"getBill failed bill_id={bid}: {detail_data}")
+            details = detail_data.get("bill")
+            if detail_data.get("status") != "OK" or not isinstance(details, dict) or str(details.get("bill_id")) != str(bid):
+                logger.warning("getBill failed for bill %s", bid)
                 stats["errors"] += 1
                 continue
+            details["change_hash"] = meta.get("change_hash", "")
+            updates.append((_flatten_bill_to_row(details, jurisdiction, session_id), details))
+            if progress_cb and (i + 1) % 25 == 0:
+                progress_cb((i + 1) / total_fetch, f"Fetched {i + 1}/{total_fetch} changed bills")
 
-            bill_detail = detail_data.get("bill", {})
-            if not bill_detail:
-                stats["errors"] += 1
-                continue
+        pending_votes = {
+            row["roll_call_id"]: row["bill_id"]
+            for row in conn.execute(
+                """SELECT r.roll_call_id, r.bill_id FROM roll_calls r
+                   JOIN bills b ON b.bill_id=r.bill_id
+                   WHERE b.session_id=? AND COALESCE(r.total, 1)>0
+                   AND NOT EXISTS (SELECT 1 FROM legislator_votes v WHERE v.roll_call_id=r.roll_call_id)""",
+                (session_id,),
+            )
+        }
+        for row, details in updates:
+            for roll_call in details.get("votes") or []:
+                roll_call_id = roll_call.get("roll_call_id")
+                if not roll_call_id or roll_call.get("total") == 0:
+                    continue
+                if roll_call.get("votes"):
+                    pending_votes.pop(roll_call_id, None)
+                elif not conn.execute(
+                    "SELECT 1 FROM legislator_votes WHERE roll_call_id=? LIMIT 1", (roll_call_id,),
+                ).fetchone():
+                    pending_votes[roll_call_id] = row["bill_id"]
 
-            bill_detail["change_hash"] = meta.get("change_hash", "")
-            row = _flatten_bill_to_row(bill_detail, jurisdiction, session_id)
-            self._upsert_bill(conn, row, stats)
-            self._process_bill_votes(conn, bill_detail)
+        vote_updates = []
+        stats["vote_errors"] = 0
+        for roll_call_id, bill_id in pending_votes.items():
+            detail = self._fetch_member_votes(roll_call_id)
+            if detail is None:
+                stats["vote_errors"] += 1
+            else:
+                vote_updates.append((detail, bill_id))
+        stats["errors"] += stats["vote_errors"]
 
-            if (i + 1) % 25 == 0:
-                conn.commit()
-                if progress_cb:
-                    progress_cb(
-                        (i + 1) / max(total_fetch, 1),
-                        f"Updated {i + 1}/{total_fetch} changed bills…",
+        # A separate connection keeps UI reads and keyword writes from committing this batch.
+        writer = sqlite3.connect(self.db_path)
+        writer.execute("PRAGMA foreign_keys=ON")
+        try:
+            with writer:
+                for row, details in updates:
+                    self._upsert_bill(writer, row, stats)
+                    for roll_call in details.get("votes") or []:
+                        self._upsert_rollcall(writer, roll_call, row["bill_id"])
+                for roll_call, bill_id in vote_updates:
+                    self._upsert_rollcall(writer, roll_call, bill_id)
+                if not stats["errors"]:
+                    now = datetime.now(timezone.utc).isoformat()
+                    writer.execute(
+                        "UPDATE sessions SET last_masterlist=? WHERE session_id=?",
+                        (now, session_id),
                     )
-
-        conn.commit()
-
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "UPDATE sessions SET last_masterlist=? WHERE session_id=?",
-            (now, session_id),
-        )
-        self._meta_set(f"last_incremental_{jurisdiction}", now)
-        conn.commit()
+                    writer.execute(
+                        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)",
+                        (f"last_incremental_{jurisdiction}", now),
+                    )
+        finally:
+            writer.close()
 
         stats["api_calls"] = self._api_calls_run - start_calls
         logger.info(f"Incremental refresh complete: {stats}")
@@ -888,7 +964,9 @@ class CorpusManager:
                     description=?, status_date=?, status_stage=?, url=?,
                     committee=?, sponsor_names=?, subjects=?, history=?,
                     last_action=?, last_action_date=?, referrals=?,
-                    change_hash=?, last_fetched=?
+                    change_hash=?, last_fetched=?,
+                    latest_doc_id=COALESCE(?, latest_doc_id),
+                    latest_doc_url=COALESCE(NULLIF(?, ''), latest_doc_url)
                 WHERE bill_id=?
                 """,
                 (
@@ -897,7 +975,7 @@ class CorpusManager:
                     row["status_stage"], row["url"], row["committee"],
                     row["sponsor_names"], row["subjects"], row["history"],
                     row["last_action"], row["last_action_date"], row["referrals"],
-                    row["change_hash"], row["last_fetched"], row["bill_id"],
+                    row["change_hash"], row["last_fetched"], row["latest_doc_id"], row["latest_doc_url"], row["bill_id"],
                 ),
             )
             stats["updated"] += 1
@@ -908,8 +986,8 @@ class CorpusManager:
                     bill_id, session_id, jurisdiction, bill_number, title,
                     description, status_date, status_stage, url, committee,
                     sponsor_names, subjects, history, last_action,
-                    last_action_date, referrals, change_hash, last_fetched
-                ) VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?)
+                    last_action_date, referrals, change_hash, last_fetched, latest_doc_id, latest_doc_url
+                ) VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?)
                 """,
                 (
                     row["bill_id"], row["session_id"], row["jurisdiction"],
@@ -917,26 +995,130 @@ class CorpusManager:
                     row["status_date"], row["status_stage"], row["url"],
                     row["committee"], row["sponsor_names"], row["subjects"],
                     row["history"], row["last_action"], row["last_action_date"],
-                    row["referrals"], row["change_hash"], row["last_fetched"],
+                    row["referrals"], row["change_hash"], row["last_fetched"], row["latest_doc_id"], row["latest_doc_url"],
                 ),
             )
             stats["new"] += 1
+        if not row.get("calendar_from_dataset") or not conn.execute(
+            "SELECT 1 FROM bill_calendar_snapshots WHERE bill_id=?", (row["bill_id"],),
+        ).fetchone():
+            self._save_bill_calendar(conn, row, row.get("calendar_feed"), row.get("calendar_source", ""))
 
-    def _process_bill_votes(self, conn: sqlite3.Connection, bill_detail: dict) -> None:
-        """Process summary votes array from getBill API, fetching full individual votes if needed."""
+    @staticmethod
+    def _save_bill_calendar(connection, bill, feed, source_url):
+        events = normalize_calendar(bill["bill_id"], feed)
+        if events is None:
+            return False
+        connection.execute(
+            """INSERT INTO bill_calendar_snapshots
+               (bill_id, jurisdiction, bill_number, title, source_url, events_json, fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(bill_id) DO UPDATE SET jurisdiction=excluded.jurisdiction,
+               bill_number=excluded.bill_number, title=excluded.title, source_url=excluded.source_url,
+               events_json=excluded.events_json, fetched_at=excluded.fetched_at""",
+            (bill["bill_id"],
+             *(bill[key] if isinstance(bill.get(key), str) else "" for key in ("jurisdiction", "bill_number", "title")),
+             source_url, json.dumps(events), datetime.now(timezone.utc).isoformat()),
+        )
+        return True
+
+    def get_bill_calendars(self, bill_ids):
+        if not bill_ids:
+            return {}
+        rows = self._get_conn().execute(
+            "SELECT * FROM bill_calendar_snapshots WHERE bill_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(bill_ids)),),
+        )
+        calendars = {}
+        for row in rows:
+            details = dict(row)
+            events = json.loads(details.pop("events_json"))
+            calendars[str(row["bill_id"])] = {"details": details, "events": [{**details, **event} for event in events]}
+        return calendars
+
+    def calendar_refresh_candidates(self, bills, limit=25):
+        if not bills:
+            return []
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        ordered = self._get_conn().execute(
+            """SELECT j.value AS bill_id,
+                      max(coalesce(s.fetched_at, ''), coalesce(a.checked_at, '')) AS last_checked
+               FROM json_each(?) j LEFT JOIN bill_calendar_snapshots s ON s.bill_id=j.value
+               LEFT JOIN bill_calendar_attempts a ON a.bill_id=j.value
+               WHERE max(coalesce(s.fetched_at, ''), coalesce(a.checked_at, '')) < ?
+               ORDER BY last_checked, j.key LIMIT ?""",
+            (json.dumps(list(bills)), cutoff, limit),
+        )
+        return [bills[str(row["bill_id"])] for row in ordered]
+
+    def refresh_tracked_calendars(self, bills, progress_cb=None):
+        """Read event feeds for an explicit batch while retaining older snapshots on errors."""
+        stats = {"new": 0, "updated": 0, "errors": 0, "unavailable": 0, "unchanged": 0}
+        start_calls = self._api_calls_run
+        connection = self._get_conn()
+        for index, bill in enumerate(bills, 1):
+            bill_id = bill["bill_id"]
+            previous = connection.execute(
+                "SELECT fetched_at FROM bill_calendar_snapshots WHERE bill_id=?", (bill_id,),
+            ).fetchone()
+            if not self.calendar_refresh_candidates({str(bill_id): bill}, limit=1):
+                stats["unchanged"] += 1
+                continue
+            details = self.get_bill(int(bill_id))
+            with connection:
+                connection.execute(
+                    """INSERT INTO bill_calendar_attempts VALUES (?, ?)
+                       ON CONFLICT(bill_id) DO UPDATE SET checked_at=excluded.checked_at""",
+                    (bill_id, datetime.now(timezone.utc).isoformat()),
+                )
+            if not details or str(details.get("bill_id")) != str(bill_id):
+                stats["errors"] += 1
+                continue
+            metadata = {
+                **bill, "title": details.get("title") or bill.get("title"),
+                "bill_number": details.get("bill_number") or bill.get("bill_number"),
+            }
+            with connection:
+                if self._save_bill_calendar(
+                    connection, metadata, details.get("calendar"),
+                    source_link(details.get("state_link"), details.get("url"), bill.get("url")),
+                ):
+                    stats["updated" if previous else "new"] += 1
+                else:
+                    stats["unavailable"] += 1
+            if progress_cb:
+                progress_cb(index / len(bills), f"Checked {index} of {len(bills)} calendar feeds")
+        stats["api_calls"] = self._api_calls_run - start_calls
+        return stats
+
+    def _fetch_member_votes(self, roll_call_id):
+        data = self._api_get({"op": "getRollCall", "id": roll_call_id})
+        detail = data.get("roll_call")
+        if data.get("status") == "OK" and isinstance(detail, dict):
+            if str(detail.get("roll_call_id")) == str(roll_call_id) and isinstance(detail.get("votes"), list):
+                if detail["votes"] or detail.get("total") == 0:
+                    return detail
+        logger.warning("Individual votes unavailable for roll call %s", roll_call_id)
+        return None
+
+    def _process_bill_votes(self, conn, bill_detail):
+        errors = 0
         bill_id = bill_detail.get("bill_id")
-        if not bill_id: return
-        for r in bill_detail.get("votes", []):
-            rc_id = r.get("roll_call_id")
-            if not rc_id: continue
-            self._upsert_rollcall(conn, r, bill_id)
-            
-            # Check if we have individual member votes dynamically
-            v_count = conn.execute("SELECT COUNT(*) FROM legislator_votes WHERE roll_call_id=?", (rc_id,)).fetchone()[0]
-            if v_count == 0:
-                rc_data = self._api_get({"op": "getRollCall", "id": rc_id})
-                if rc_data.get("status") == "OK" and rc_data.get("roll_call"):
-                    self._upsert_rollcall(conn, rc_data["roll_call"], bill_id)
+        for roll_call in bill_detail.get("votes") or []:
+            roll_call_id = roll_call.get("roll_call_id")
+            if not roll_call_id or not bill_id:
+                continue
+            self._upsert_rollcall(conn, roll_call, bill_id)
+            if roll_call.get("total") == 0 or conn.execute(
+                "SELECT 1 FROM legislator_votes WHERE roll_call_id=? LIMIT 1", (roll_call_id,),
+            ).fetchone():
+                continue
+            detail = self._fetch_member_votes(roll_call_id)
+            if detail is None:
+                errors += 1
+            else:
+                self._upsert_rollcall(conn, detail, bill_id)
+        return errors
 
     # ── Keyword match overlay ─────────────────────────────────────────────────
 
@@ -968,7 +1150,20 @@ class CorpusManager:
         status_filter: Optional[list[str]] = None,
         keyword_filter: Optional[list[str]] = None,
         limit: int = 500,
-    ) -> pd.DataFrame:
+        session_id: Optional[int] = None,
+        topic_terms: Optional[list[str]] = None,
+        *,
+        topic_required=None,
+        topic_excluded=None,
+        date_range=None,
+        sponsors=None,
+        committees=None,
+        bill_ids=None,
+        excluded_bill_ids=None,
+        sort="Status Date (Newest)",
+        offset=0,
+        count_only=False,
+    ) -> pd.DataFrame | int:
         """
         Search the master corpus.
 
@@ -987,12 +1182,46 @@ class CorpusManager:
         params: list = []
 
         if query:
-            q = f"%{query.lower()}%"
-            conditions.append(
-                "(LOWER(b.bill_number) LIKE ? OR LOWER(b.title) LIKE ? "
-                "OR LOWER(b.description) LIKE ? OR LOWER(b.sponsor_names) LIKE ?)"
+            fields = ("bill_number", "title", "description", "sponsor_names", "subjects", "committee")
+            clauses = [f"instr(lower(coalesce(b.{field}, '')), ?) > 0" for field in fields]
+            conditions.append("(" + " OR ".join(clauses) + ")")
+            params.extend([query.lower()] * len(fields))
+
+        if date_range and len(date_range) == 2:
+            conditions.append("substr(b.status_date, 1, 10) BETWEEN ? AND ?")
+            params.extend(map(str, date_range))
+        if sponsors:
+            clauses = [
+                "(lower(b.sponsor_names) = lower(?) OR "
+                "instr(',' || replace(lower(b.sponsor_names), ', ', ',') || ',', ',' || lower(?) || ',') > 0)"
+                for sponsor in sponsors
+            ]
+            conditions.append("(" + " OR ".join(clauses) + ")")
+            params.extend(value for sponsor in sponsors for value in (sponsor, sponsor))
+        if committees:
+            conditions.append("b.committee IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(committees)))
+        if bill_ids is not None:
+            conditions.append("CAST(b.bill_id AS TEXT) IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(map(str, bill_ids))))
+        if excluded_bill_ids:
+            conditions.append("CAST(b.bill_id AS TEXT) NOT IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(map(str, excluded_bill_ids))))
+
+        def topic_clause(term):
+            params.extend([term.casefold()] * 3)
+            return (
+                "(instr(casefold(coalesce(b.title, '')), ?) > 0 OR "
+                "instr(casefold(coalesce(b.description, '')), ?) > 0 OR "
+                "instr(casefold(coalesce(b.subjects, '')), ?) > 0)"
             )
-            params.extend([q, q, q, q])
+
+        if topic_terms:
+            conditions.append("(" + " OR ".join(topic_clause(term) for term in topic_terms) + ")")
+        for term in topic_required or ():
+            conditions.append(topic_clause(term))
+        for term in topic_excluded or ():
+            conditions.append("NOT " + topic_clause(term))
 
         if jurisdiction_filter:
             # Accept both friendly names and raw codes
@@ -1009,6 +1238,10 @@ class CorpusManager:
             conditions.append(f"b.status_stage IN ({placeholders})")
             params.extend(status_filter)
 
+        if session_id is not None:
+            conditions.append("b.session_id = ?")
+            params.append(session_id)
+
         if keyword_filter:
             placeholders = ",".join("?" * len(keyword_filter))
             conditions.append(
@@ -1019,6 +1252,15 @@ class CorpusManager:
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
+        if count_only:
+            return conn.execute(f"SELECT COUNT(*) FROM bills b {where}", params).fetchone()[0]
+
+        order_by = {
+            "Most Recent Action": "b.last_action_date DESC",
+            "Status Date (Newest)": "b.status_date DESC",
+            "Bill Number A→Z": "b.bill_number COLLATE NOCASE ASC",
+            "Status Stage": "b.status_stage ASC",
+        }.get(sort, "b.status_date DESC")
         sql = f"""
             SELECT
                 b.bill_id,
@@ -1068,10 +1310,10 @@ class CorpusManager:
             FROM bills b
             LEFT JOIN sessions s ON b.session_id = s.session_id
             {where}
-            ORDER BY b.status_date DESC, b.bill_number
-            LIMIT ?
+            ORDER BY {order_by}, b.bill_id
+            LIMIT ? OFFSET ?
         """
-        params.append(limit)
+        params.extend([-1 if limit is None else limit, offset])
 
         try:
             rows = conn.execute(sql, params).fetchall()
@@ -1084,6 +1326,12 @@ class CorpusManager:
         return pd.DataFrame([dict(r) for r in rows])
 
     # ── Bulk bill lookup by bill_id ───────────────────────────────────────────
+
+    def indexed_bill_ids(self, bill_ids):
+        return {str(row[0]) for row in self._get_conn().execute(
+            "SELECT bill_id FROM bills WHERE bill_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(bill_ids)),),
+        )}
 
     def get_bills_by_ids(self, bill_ids: list) -> "pd.DataFrame":
         """
@@ -1127,6 +1375,50 @@ class CorpusManager:
         return pd.DataFrame([dict(r) for r in rows])
 
     # ── Stats ─────────────────────────────────────────────────────────────────
+
+    def get_historical_coverage(self):
+        """Report indexed and cached material for each discovered CA or US session."""
+        return pd.read_sql_query("""
+            WITH text_cache AS (
+                SELECT DISTINCT bill_id FROM bill_texts
+                WHERE length(content_html)>0 OR length(content_pdf_url)>0
+            ),
+            bill_coverage AS (
+                SELECT b.session_id, COUNT(*) AS bills,
+                       SUM(b.latest_doc_id IS NOT NULL OR length(coalesce(b.latest_doc_url, ''))>0
+                           OR t.bill_id IS NOT NULL) AS bills_with_text,
+                       SUM(t.bill_id IS NOT NULL) AS bills_with_cached_text
+                FROM bills b LEFT JOIN text_cache t ON t.bill_id=b.bill_id
+                GROUP BY b.session_id
+            ),
+            roll_call_coverage AS (
+                SELECT b.session_id, COUNT(*) AS roll_calls,
+                       SUM(EXISTS (SELECT 1 FROM legislator_votes v
+                                   WHERE v.roll_call_id=r.roll_call_id)) AS with_individual_votes
+                FROM roll_calls r JOIN bills b ON b.bill_id=r.bill_id
+                GROUP BY b.session_id
+            )
+            SELECT s.session_id, s.jurisdiction, s.session_name, s.year_start, s.year_end,
+                   s.last_bootstrap, s.last_masterlist,
+                   coalesce(b.bills, 0) AS bills, coalesce(b.bills_with_text, 0) AS bills_with_text,
+                   coalesce(b.bills_with_cached_text, 0) AS bills_with_cached_text,
+                   coalesce(r.roll_calls, 0) AS roll_calls,
+                   coalesce(r.with_individual_votes, 0) AS with_individual_votes
+            FROM sessions s LEFT JOIN bill_coverage b ON b.session_id=s.session_id
+            LEFT JOIN roll_call_coverage r ON r.session_id=s.session_id
+            WHERE s.jurisdiction IN ('CA', 'US')
+            ORDER BY s.year_start DESC, s.jurisdiction, s.session_id DESC
+        """, self._get_conn())
+
+    def get_filter_options(self):
+        conn = self._get_conn()
+        sponsors = {
+            name.strip()
+            for row in conn.execute("SELECT DISTINCT sponsor_names FROM bills WHERE sponsor_names <> ''")
+            for name in row[0].split(",") if name.strip()
+        }
+        committees = {row[0] for row in conn.execute("SELECT DISTINCT committee FROM bills WHERE committee <> ''")}
+        return sponsors, committees
 
     def get_corpus_stats(self) -> dict:
         """Return summary statistics about the local corpus (no API calls)."""
@@ -1187,48 +1479,56 @@ class CorpusManager:
         return result
 
     def get_votes_for_legislator(self, staff_legislator_id: str) -> list[dict]:
-        """Fetch a legislator's voting history by our internal staff_legislator_id."""
-        conn = self._get_conn()
-        sql = """
-            SELECT lv.vote_text, rc.date as vote_date, rc.desc as motion, rc.passed,
-                   b.bill_number, b.title, b.jurisdiction, b.bill_id
-            FROM legislator_votes lv
-            JOIN roll_calls rc ON lv.roll_call_id = rc.roll_call_id
-            JOIN bills b ON rc.bill_id = b.bill_id
-            JOIN people_mapping pm ON lv.people_id = pm.people_id
-            WHERE pm.staff_legislator_id = ?
-            ORDER BY rc.date DESC
-        """
-        rows = conn.execute(sql, (staff_legislator_id,)).fetchall()
-        return [dict(r) for r in rows]
+        """Fetch recorded votes for a legislator linked to the staff directory."""
+        return self._get_legislator_votes(
+            "JOIN people_mapping pm ON lv.people_id = pm.people_id",
+            "pm.staff_legislator_id = ? AND pm.match_quality IN ('Verified Name and Jurisdiction', 'Manual verified')", (staff_legislator_id,),
+        )
 
-    def get_votes_for_legislator_by_name(self, first_name: str, last_name: str) -> list[dict]:
-        """
-        Fallback vote lookup by name — works even when people_mapping hasn't been run.
-        Matches on last_name (required) and optionally first_name from the people table.
-        """
-        conn = self._get_conn()
-        if not last_name:
+    def get_votes_for_legislator_by_name(self, first_name: str, last_name: str, jurisdiction=None, profile_id=None) -> list[dict]:
+        """Use a unique full-name match when an identity link is unavailable."""
+        if not first_name or not last_name:
             return []
-        params: list = [f"%{last_name.lower()}%"]
-        name_clause = "LOWER(p.last_name) LIKE ?"
-        if first_name:
-            name_clause += " AND LOWER(p.first_name) LIKE ?"
-            params.append(f"%{first_name.lower()}%")
-        sql = f"""
-            SELECT lv.vote_text, rc.date as vote_date, rc.desc as motion, rc.passed,
-                   b.bill_number, b.title, b.jurisdiction, b.bill_id,
-                   p.name as legislator_name
+        matches = self._get_conn().execute(
+            """SELECT p.people_id FROM people p
+               LEFT JOIN people_mapping m ON m.people_id=p.people_id
+               WHERE LOWER(p.first_name)=LOWER(?) AND LOWER(p.last_name)=LOWER(?)
+               AND coalesce(m.match_quality, '') NOT IN ('Ambiguous', 'Manual excluded')
+               AND (? IS NULL OR m.staff_legislator_id IS NULL OR m.staff_legislator_id=?)""",
+            (first_name.strip(), last_name.strip(), profile_id, profile_id),
+        ).fetchall()
+        if jurisdiction:
+            matches = [
+                row for row in matches if self._get_conn().execute(
+                    """SELECT 1 FROM legislator_votes v JOIN roll_calls r ON v.roll_call_id=r.roll_call_id
+                       JOIN bills b ON b.bill_id=r.bill_id WHERE v.people_id=? AND b.jurisdiction=? LIMIT 1""",
+                    (row[0], jurisdiction),
+                ).fetchone()
+            ]
+        if len(matches) != 1:
+            return []
+        where = "lv.people_id = ?"
+        params = (matches[0][0],)
+        if jurisdiction:
+            where += " AND b.jurisdiction = ?"
+            params += (jurisdiction,)
+        return self._get_legislator_votes("", where, params)
+
+    def _get_legislator_votes(self, identity_join, condition, params):
+        rows = self._get_conn().execute(f"""
+            SELECT rc.roll_call_id, lv.vote_text, rc.date AS vote_date,
+                   rc.desc AS motion, rc.passed, rc.chamber AS vote_chamber, b.bill_number, b.title,
+                   b.jurisdiction, b.bill_id, b.subjects, b.committee,
+                   s.session_name AS session
             FROM legislator_votes lv
-            JOIN people p ON lv.people_id = p.people_id
             JOIN roll_calls rc ON lv.roll_call_id = rc.roll_call_id
             JOIN bills b ON rc.bill_id = b.bill_id
-            WHERE {name_clause}
-            ORDER BY rc.date DESC
-            LIMIT 200
-        """
-        rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+            LEFT JOIN sessions s ON b.session_id = s.session_id
+            {identity_join}
+            WHERE {condition}
+            ORDER BY rc.date DESC, rc.roll_call_id DESC
+        """, params).fetchall()
+        return [dict(row) for row in rows]
 
     def get_staff_cross_reference(self, staff_name: str) -> list[dict]:
         """
@@ -1245,93 +1545,115 @@ class CorpusManager:
         return [dict(r) for r in rows]
 
         
-    def sync_people_mapping(self, staff_df: pd.DataFrame) -> dict:
-        """
-        Attempt to map raw LegiScan people_id records to internal staff_manager legislator_ids.
-        Uses name normalizations similar to the staff_manager resolver.
-        """
-        if staff_df.empty:
-            return {"matched": 0, "unmatched": 0, "total": 0}
-            
+    def sync_people_mapping(self, staff_df):
+        """Link recorded voters to a unique directory identity in the same jurisdiction."""
+        from staff_manager import normalize_name_components
+
+        def normalized(value):
+            return normalize_name_components(value)["full"]
+
+        def chamber(value):
+            value = str(value or "").lower().strip()
+            if value in {"s", "sen", "senate", "upper"}:
+                return "upper"
+            if value in {"a", "h", "assembly", "house", "lower", "house of representatives"}:
+                return "lower"
+            return ""
+
+        directory = {}
+        for row in staff_df.to_dict("records"):
+            name = normalized(row.get("name"))
+            state = str(row.get("state") or "").upper()
+            if name and state and row.get("legislator_id"):
+                directory.setdefault((name, state), []).append(row)
+
         conn = self._get_conn()
-        people_rows = conn.execute("SELECT * FROM people").fetchall()
-        
-        # Build quick lookup from staff_df
-        # Create normalized last name to staff id
-        import string
-        def _norm(n):
-            if not n: return ""
-            return n.lower().translate(str.maketrans('', '', string.punctuation)).replace(" ", "")
+        context = {}
+        for source in conn.execute(
+            """SELECT DISTINCT v.people_id, b.jurisdiction FROM legislator_votes v
+               JOIN roll_calls r ON r.roll_call_id=v.roll_call_id
+               JOIN bills b ON b.bill_id=r.bill_id"""
+        ):
+            context.setdefault(source["people_id"], set()).add(source["jurisdiction"])
 
-        staff_lookup = {}
-        for _, row in staff_df.iterrows():
-            lname = _norm(row.get("last_name", ""))
-            fname = _norm(row.get("first_name", ""))
-            staff_id = str(row.get("legislator_id", ""))
-            chamber = str(row.get("chamber", "")).lower()
-            if lname:
-                staff_lookup[(lname, chamber)] = staff_id
-                staff_lookup[(lname, fname)] = staff_id
-        
-        matched, unmatched = 0, 0
-        
-        # Also build a fallback full-name substring lookup
-        staff_fullname_lookup = {}
-        for _, row in staff_df.iterrows():
-            lname = _norm(row.get("last_name", ""))
-            fname = _norm(row.get("first_name", ""))
-            staff_id = str(row.get("legislator_id", ""))
-            full_norm = _norm(f"{fname}{lname}")
-            if full_norm:
-                staff_fullname_lookup[full_norm] = staff_id
-        
-        for p in people_rows:
-            pid = p["people_id"]
-            p_name_raw = p["name"] or ""
-            
-            if "Unknown Profile" in p_name_raw:
-                unmatched += 1
-                continue
-                
-            p_lname = _norm(p["last_name"])
-            p_fname = _norm(p["first_name"])
-            p_chamber = "upper" if "senate" in str(p["chamber"]).lower() else "lower"
-            p_full_norm = _norm(p_name_raw)
+        manual = {row["people_id"]: row for row in conn.execute(
+            "SELECT * FROM people_mapping WHERE match_quality IN ('Manual verified', 'Manual excluded')"
+        )}
+        active_ids = {row["legislator_id"] for rows in directory.values() for row in rows}
+        people = conn.execute("SELECT * FROM people").fetchall()
+        matched = 0
+        with conn:
+            for person in people:
+                person_id = person["people_id"]
+                decision = manual.get(person_id)
+                if decision and (
+                    decision["match_quality"] == "Manual excluded" or decision["staff_legislator_id"] in active_ids
+                ):
+                    matched += bool(decision["staff_legislator_id"])
+                    continue
+                name = normalized(person["name"] or " ".join(filter(None, (person["first_name"], person["last_name"]))))
+                candidates = [row for state in context.get(person_id, ()) for row in directory.get((name, state), ())]
+                source_chamber = chamber(person["chamber"])
+                if source_chamber:
+                    candidates = [row for row in candidates if chamber(row.get("chamber")) == source_chamber]
+                staff_id = candidates[0]["legislator_id"] if len(candidates) == 1 else None
+                quality = "Verified Name and Jurisdiction" if staff_id else "Ambiguous" if candidates else "Unmatched"
+                matched += bool(staff_id)
+                conn.execute(
+                    """INSERT INTO people_mapping (people_id, staff_legislator_id, match_quality)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(people_id) DO UPDATE SET staff_legislator_id=excluded.staff_legislator_id,
+                       match_quality=excluded.match_quality""",
+                    (person_id, staff_id, quality),
+                )
+        return {"matched": matched, "unmatched": len(people) - matched, "total": len(people)}
 
-            if not p_lname:
-                parts = p_name_raw.split()
-                p_lname = _norm(parts[-1] if parts else "")
-                p_fname = _norm(parts[0] if len(parts) > 1 else "")
-            
-            # Primary exact match checks
-            match_id = staff_lookup.get((p_lname, p_chamber)) or staff_lookup.get((p_lname, p_fname))
-            
-            # Secondary fallback substring matching
-            if not match_id and p_full_norm:
-                for target_norm, s_id in staff_fullname_lookup.items():
-                    if p_full_norm in target_norm or target_norm in p_full_norm:
-                        match_id = s_id
-                        break
-            
-            if match_id:
-                matched += 1
-                conn.execute(
-                    "INSERT INTO people_mapping (people_id, staff_legislator_id, match_quality) "
-                    "VALUES (?, ?, 'Auto-Name-Chamber') "
-                    "ON CONFLICT(people_id) DO UPDATE SET staff_legislator_id=excluded.staff_legislator_id",
-                    (pid, match_id)
-                )
-            else:
-                unmatched += 1
-                conn.execute(
-                    "INSERT INTO people_mapping (people_id, staff_legislator_id, match_quality) "
-                    "VALUES (?, NULL, 'Unmatched') "
-                    "ON CONFLICT(people_id) DO UPDATE SET match_quality=excluded.match_quality",
-                    (pid,)
-                )
-                
-        conn.commit()
-        return {"matched": matched, "unmatched": unmatched, "total": len(people_rows)}
+    def get_federal_member_votes(self, people_id):
+        return self._get_legislator_votes("", "lv.people_id = ? AND b.jurisdiction = 'US'", (people_id,))
+
+    def list_vote_identities(self, query="", *, include_linked=False, limit=100, jurisdiction=None):
+        return [dict(row) for row in self._get_conn().execute(
+            """SELECT p.people_id, p.name, p.chamber, p.district,
+                      m.staff_legislator_id, coalesce(m.match_quality, 'Unreviewed') AS quality,
+                      GROUP_CONCAT(DISTINCT b.jurisdiction) AS jurisdictions,
+                      GROUP_CONCAT(DISTINCT s.session_name) AS sessions,
+                      COUNT(DISTINCT r.roll_call_id) AS votes
+               FROM people p JOIN legislator_votes v ON v.people_id=p.people_id
+               JOIN roll_calls r ON r.roll_call_id=v.roll_call_id
+               JOIN bills b ON b.bill_id=r.bill_id
+               LEFT JOIN sessions s ON s.session_id=b.session_id
+               LEFT JOIN people_mapping m ON m.people_id=p.people_id
+               WHERE (instr(lower(coalesce(p.name, '')), lower(?))>0 OR ?='')
+               AND (? IS NULL OR b.jurisdiction=?)
+               GROUP BY p.people_id
+               HAVING ? OR coalesce(m.match_quality, '') NOT IN
+                    ('Verified Name and Jurisdiction', 'Manual verified', 'Manual excluded')
+               ORDER BY votes DESC, p.name, p.people_id LIMIT ?""",
+            (query, query, jurisdiction, jurisdiction, include_linked, limit),
+        )]
+
+    def review_vote_identity(self, people_id, profile=None):
+        """Persist an admin decision separately from automated name matching."""
+        conn = self._get_conn()
+        jurisdictions = {
+            row[0] for row in conn.execute(
+                """SELECT DISTINCT b.jurisdiction FROM legislator_votes v
+                   JOIN roll_calls r ON r.roll_call_id=v.roll_call_id JOIN bills b ON b.bill_id=r.bill_id
+                   WHERE v.people_id=?""", (people_id,),
+            )
+        }
+        if not jurisdictions:
+            raise ValueError("No recorded votes were found for that identity.")
+        if profile and profile.get("state") not in jurisdictions:
+            raise ValueError("The profile is outside the jurisdictions in the voter record.")
+        with conn:
+            conn.execute(
+                """INSERT INTO people_mapping (people_id, staff_legislator_id, match_quality) VALUES (?, ?, ?)
+                   ON CONFLICT(people_id) DO UPDATE SET staff_legislator_id=excluded.staff_legislator_id,
+                   match_quality=excluded.match_quality""",
+                (people_id, profile["legislator_id"] if profile else None,
+                 "Manual verified" if profile else "Manual excluded"),
+            )
 
     def get_people_mapping_stats(self) -> dict:
         conn = self._get_conn()
@@ -1340,30 +1662,6 @@ class CorpusManager:
         unmatched = conn.execute("SELECT COUNT(*) FROM people_mapping WHERE staff_legislator_id IS NULL").fetchone()[0]
         return {"total": total, "matched": matched, "unmatched": unmatched}
 
-    def get_votes_for_legislator_by_name(self, first_name: str, last_name: str) -> list[dict]:
-        """
-        Fallback name-based lookup for voting history. 
-        Returns votes for anyone whose extracted name starts-with or matches the target.
-        """
-        conn = self._get_conn()
-        sql = """
-            SELECT 
-                rc.roll_call_id, rc.date as vote_date, rc.desc as motion,
-                lv.vote_text, b.bill_number
-            FROM people p
-            JOIN legislator_votes lv ON p.people_id = lv.people_id
-            JOIN roll_calls rc ON lv.roll_call_id = rc.roll_call_id
-            JOIN bills b ON rc.bill_id = b.bill_id
-            WHERE p.last_name = ?
-            ORDER BY rc.date DESC
-        """
-        rows = conn.execute(sql, (last_name,)).fetchall()
-        # Basic filter for first name if multiple last names exist
-        results = [dict(r) for r in rows]
-        return results
-
-    # ── Bill Text & Detailed Bill Fetching ───────────────────────────────────
-
     def get_bill(self, bill_id: int) -> Optional[dict]:
         """Fetch detailed bill JSON from LegiScan API by bill_id."""
         logger.info(f"API: get_bill(bill_id={bill_id})")
@@ -1371,6 +1669,14 @@ class CorpusManager:
         if res.get("status") == "OK" and "bill" in res:
             return res["bill"]
         return None
+
+    def get_bill_versions(self, bill_id: int) -> list[dict]:
+        details = self.get_bill(bill_id) or {}
+        versions = {}
+        for text in details.get("texts") or []:
+            if isinstance(text, dict) and text.get("doc_id"):
+                versions[int(text["doc_id"])] = text
+        return sorted(versions.values(), key=lambda item: (item.get("date") or "", int(item["doc_id"])))
 
     def get_bill_text(self, bill_id: int, doc_id: Optional[int] = None) -> Optional[dict]:
         """
@@ -1382,8 +1688,8 @@ class CorpusManager:
         # 1. Try cache
         if doc_id:
             cached = conn.execute(
-                "SELECT content_html, content_pdf_url, mime_type FROM bill_texts WHERE doc_id=?", 
-                (doc_id,)
+                "SELECT content_html, content_pdf_url, mime_type FROM bill_texts WHERE doc_id=? AND bill_id=?",
+                (doc_id, bill_id)
             ).fetchone()
             if cached:
                 return {
@@ -1418,8 +1724,8 @@ class CorpusManager:
 
         # 3. Double check cache with resolved doc_id
         cached = conn.execute(
-            "SELECT content_html, content_pdf_url, mime_type FROM bill_texts WHERE doc_id=?", 
-            (doc_id,)
+            "SELECT content_html, content_pdf_url, mime_type FROM bill_texts WHERE doc_id=? AND bill_id=?",
+            (doc_id, bill_id)
         ).fetchone()
         if cached:
             return {

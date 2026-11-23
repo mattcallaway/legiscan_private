@@ -1,19 +1,30 @@
 import logging
+from threading import Event, Thread
 from typing import Optional, Callable
-from job_manager import JobManager
+from job_manager import JobConflict, JobManager
 from legiscanner import run_scan
+from request_budget import job_request_budget
 
 logger = logging.getLogger(__name__)
 
-def run_bootstrap_job(corpus, session_id: int, jurisdiction: str, job_manager: JobManager, progress_cb: Optional[Callable] = None) -> dict:
-    job_id = job_manager.start_job("bootstrap_corpus", jurisdiction, str(session_id))
+def run_bootstrap_job(corpus, session_id: int, jurisdiction: str, job_manager: JobManager, progress_cb: Optional[Callable] = None, *, allow_individual_fallback: bool = True, job_id=None) -> dict:
+    job_id = job_id or job_manager.start_job("bootstrap_corpus", jurisdiction, str(session_id))
     try:
         if progress_cb: progress_cb(0.0, "Starting bootstrap...")
-        stats = corpus.bootstrap_session(session_id, jurisdiction, progress_cb)
-        
+        with job_request_budget() as budget:
+            stats = corpus.bootstrap_session(
+                session_id, jurisdiction, progress_cb,
+                allow_individual_fallback=allow_individual_fallback,
+            )
+        if budget.limit is not None:
+            stats["api_calls"] = budget.used
+        stats["budget_exhausted"] = budget.exhausted
+
         job_manager.finish_job(
             job_id,
-            status="SUCCESS",
+            status="FAILED" if stats["errors"] else "SUCCESS",
+            error_summary=("LegiScan request budget reached" if budget.exhausted
+                           else f'{stats["errors"]} bootstrap errors' if stats["errors"] else ""),
             new_items=stats.get("new", 0),
             updated_items=stats.get("updated", 0),
             api_calls=stats.get("api_calls", 0)
@@ -24,15 +35,22 @@ def run_bootstrap_job(corpus, session_id: int, jurisdiction: str, job_manager: J
         job_manager.finish_job(job_id, status="FAILED", error_summary=str(e))
         raise
 
-def run_refresh_job(corpus, session_id: int, jurisdiction: str, job_manager: JobManager, progress_cb: Optional[Callable] = None) -> dict:
-    job_id = job_manager.start_job("incremental_refresh", jurisdiction, str(session_id))
+def run_refresh_job(corpus, session_id: int, jurisdiction: str, job_manager: JobManager, progress_cb: Optional[Callable] = None, *, job_id=None) -> dict:
+    job_id = job_id or job_manager.start_job("incremental_refresh", jurisdiction, str(session_id))
     try:
         if progress_cb: progress_cb(0.0, "Starting incremental refresh...")
-        stats = corpus.refresh_session(session_id, jurisdiction, progress_cb)
+        with job_request_budget() as budget:
+            stats = corpus.refresh_session(session_id, jurisdiction, progress_cb)
+        if budget.limit is not None:
+            stats["api_calls"] = budget.used
+        stats["budget_exhausted"] = budget.exhausted
         
+        failures = stats["errors"]
         job_manager.finish_job(
             job_id,
-            status="SUCCESS",
+            status="FAILED" if failures else "SUCCESS",
+            error_summary=("LegiScan request budget reached" if budget.exhausted
+                           else f"{failures} upstream refresh failures" if failures else ""),
             new_items=stats.get("new", 0),
             updated_items=stats.get("updated", 0),
             api_calls=stats.get("api_calls", 0)
@@ -43,19 +61,29 @@ def run_refresh_job(corpus, session_id: int, jurisdiction: str, job_manager: Job
         job_manager.finish_job(job_id, status="FAILED", error_summary=str(e))
         raise
 
-def run_rescan_job(corpus, states: list, data_dir: str, job_manager: JobManager, progress_cb: Optional[Callable] = None, initiated_by="system") -> dict:
+def run_rescan_job(corpus, states: list, data_dir: str, job_manager: JobManager, progress_cb: Optional[Callable] = None, initiated_by="system", *, job_id=None) -> dict:
     jur_str = ",".join(states)
-    job_id = job_manager.start_job("keyword_rescan", jur_str, "ALL", initiated_by=initiated_by)
+    job_id = job_id or job_manager.start_job("keyword_rescan", jur_str, "ALL", initiated_by=initiated_by)
     try:
         if progress_cb: progress_cb(0.0, "Starting keyword rescan...")
         # run_scan from legiscanner
-        stats = run_scan(states=states, data_dir=data_dir, corpus_manager=corpus)
+        with job_request_budget() as budget:
+            stats = run_scan(states=states, data_dir=data_dir, corpus_manager=corpus)
+        if budget.limit is not None:
+            stats["api_calls"] = budget.used
+        stats["budget_exhausted"] = budget.exhausted
         
+        failed = stats["api_status"] == "error"
+        error_summary = (
+            f'{stats["search_failures"]} search failures and {stats["detail_failures"]} bill detail failures'
+            if failed else ""
+        )
         job_manager.finish_job(
             job_id,
-            status="SUCCESS",
+            status="FAILED" if failed else "SUCCESS",
+            error_summary="LegiScan request budget reached" if budget.exhausted else error_summary,
             new_items=stats.get("new_bills", 0),
-            updated_items=stats.get("changed_status", 0),
+            updated_items=stats.get("updated_bills", 0),
             records_processed=stats.get("total_found", 0),
             api_calls=stats.get("api_calls", 0)
         )
@@ -64,3 +92,124 @@ def run_rescan_job(corpus, states: list, data_dir: str, job_manager: JobManager,
         logger.error(f"Rescan job failed: {e}", exc_info=True)
         job_manager.finish_job(job_id, status="FAILED", error_summary=str(e))
         raise
+
+def current_session(sessions, year):
+    """Choose a regular session covering the given year, never a past or future one."""
+    candidates = [
+        session for session in sessions
+        if (session.get("year_start") or 0) <= year <= (session.get("year_end") or 0)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda session: (
+        "special" not in (session.get("session_name") or "").casefold(),
+        session["year_start"], session["year_end"], session["session_id"],
+    ))
+
+
+def _sync_current_session(corpus, jurisdiction, year, job_manager, progress_cb, job_id=None):
+    session = current_session(corpus.get_cached_sessions(jurisdiction), year)
+    if session is None:
+        corpus.get_active_sessions(jurisdiction)
+        session = current_session(corpus.get_cached_sessions(jurisdiction), year)
+    if session is None:
+        raise RuntimeError(f"No current session was found for {year}.")
+
+    session_id = session["session_id"]
+    importing = not session.get("last_bootstrap")
+    if importing:
+        stats = run_bootstrap_job(
+            corpus, session_id, jurisdiction, job_manager, progress_cb,
+            allow_individual_fallback=False, job_id=job_id,
+        )
+    else:
+        stats = run_refresh_job(corpus, session_id, jurisdiction, job_manager, progress_cb, job_id=job_id)
+    return {"session": session["session_name"], "importing": importing, "stats": stats}
+
+
+def sync_selected_sessions(corpus, jurisdictions, year, job_manager, progress_cb=None):
+    """Bulk-import a current session once, then refresh it on subsequent syncs."""
+    outcomes = {}
+    for jurisdiction in jurisdictions:
+        try:
+            outcomes[jurisdiction] = _sync_current_session(corpus, jurisdiction, year, job_manager, progress_cb)
+        except Exception as error:
+            outcomes[jurisdiction] = {"error": str(error)}
+    return outcomes
+
+
+def run_calendar_refresh(corpus, bills, job_manager, progress_cb=None, *, job_id=None, initiated_by="system"):
+    if not 1 <= len(bills) <= 25:
+        raise ValueError("Select up to 25 tracked bills for calendar refresh.")
+    job_id = job_id or job_manager.start_job("calendar_refresh", "", "WATCHLIST", initiated_by=initiated_by)
+    try:
+        with job_request_budget() as budget:
+            stats = corpus.refresh_tracked_calendars(bills, progress_cb)
+        message = ("LegiScan request budget reached" if budget.exhausted else
+                   f'{stats["errors"]} calendar requests failed' if stats["errors"] else
+                   f'{stats["unavailable"]} bills had no usable source calendar' if stats["unavailable"] else "")
+        job_manager.finish_job(
+            job_id, status="FAILED" if stats["errors"] else "SUCCESS", error_summary=message,
+            new_items=stats["new"], updated_items=stats["updated"], api_calls=stats["api_calls"],
+        )
+        return stats
+    except Exception as error:
+        job_manager.finish_job(job_id, status="FAILED", error_summary=str(error))
+        raise
+
+
+def execute_next_job(corpus, data_dir, job_manager):
+    """Run one queued job. The queue contains instructions and no credentials."""
+    job = job_manager.claim_next_job()
+    if job is None:
+        return None
+
+    identifier = job["job_id"]
+    stop = Event()
+    lost_claim = Event()
+
+    def keep_claim_alive():
+        while not stop.wait(20):
+            try:
+                if not job_manager.heartbeat(identifier):
+                    lost_claim.set()
+                    return
+            except Exception:
+                logger.warning("Unable to update queued job heartbeat", exc_info=True)
+
+    def progress(fraction, message):
+        if lost_claim.is_set() or not job_manager.heartbeat(
+            identifier, fraction=max(0.0, min(1.0, fraction)), message=message,
+        ):
+            raise JobConflict("This worker no longer holds the sync job claim.")
+
+    heartbeat = Thread(target=keep_claim_alive, daemon=True)
+    heartbeat.start()
+    try:
+        kind = job["job_type"]
+        payload = job["payload"]
+        scope = job["session_scope"]
+        jurisdiction = job["jurisdiction"]
+        if kind == "current_session_sync":
+            _sync_current_session(corpus, jurisdiction, payload["year"], job_manager, progress, job_id=identifier)
+        elif kind == "bootstrap_corpus":
+            run_bootstrap_job(corpus, int(scope), jurisdiction, job_manager, progress,
+                              allow_individual_fallback=False, job_id=identifier)
+        elif kind == "incremental_refresh":
+            run_refresh_job(corpus, int(scope), jurisdiction, job_manager, progress, job_id=identifier)
+        elif kind == "calendar_refresh":
+            run_calendar_refresh(corpus, payload["bills"], job_manager, progress, job_id=identifier)
+        elif kind == "keyword_rescan":
+            run_rescan_job(corpus, payload["states"], data_dir, job_manager, progress, job_id=identifier)
+            from sync_github_repo import sync_with_remote
+            sync_with_remote()
+        else:
+            raise ValueError("Unsupported queued sync job.")
+    except Exception as error:
+        # A runner may already have closed this job. Only RUNNING jobs are updated.
+        job_manager.finish_job(identifier, status="FAILED", error_summary=str(error))
+        logger.warning("Queued job %s failed: %s", identifier, error)
+    finally:
+        stop.set()
+        heartbeat.join()
+    return identifier
